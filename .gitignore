@@ -1,0 +1,22 @@
+node_modules/
+keys/
+preview-qrcode.jpg
+project.private.config.json
+dist/
+.DS_Store
+*.log
+
+# Java / Maven
+server/target/
+*.class
+
+# 本地密钥配置（LLM Key 等，不入库）
+server/src/main/resources/application-local.yml
+
+# 法学 RAG 数据源（法条/真题/教材，体积大且有独立更新节奏，不入库）
+data/law/
+
+# IDE
+.idea/
+*.iml
+.vscode/

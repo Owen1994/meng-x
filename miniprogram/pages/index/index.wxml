@@ -1,0 +1,6 @@
+<view class="page">
+  <view class="moon"></view>
+  <text class="title">点子铺</text>
+  <text class="slogan">把好点子，聊成真的功能</text>
+  <view class="badge">v{{version}} · MVP 骨架就绪</view>
+</view>

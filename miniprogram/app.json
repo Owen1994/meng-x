@@ -1,0 +1,14 @@
+{
+  "pages": [
+    "pages/index/index"
+  ],
+  "window": {
+    "navigationBarBackgroundColor": "#16122B",
+    "navigationBarTitleText": "点子铺",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#16122B",
+    "backgroundTextStyle": "dark"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

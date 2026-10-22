@@ -1,0 +1,15 @@
+{
+  "appid": "touristappid",
+  "projectname": "meng-x",
+  "miniprogramRoot": "miniprogram/",
+  "compileType": "miniprogram",
+  "libVersion": "latest",
+  "setting": {
+    "es6": true,
+    "postcss": true,
+    "minified": true,
+    "urlCheck": false,
+    "ignoreUploadUnusedFiles": true
+  },
+  "condition": {}
+}

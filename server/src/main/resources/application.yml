@@ -1,0 +1,76 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: meng-x-server
+  config:
+    # 自动导入本地密钥配置：文件存在即生效，无需 profile；生产 jar 不含该文件，自动跳过
+    import: optional:classpath:application-local.yml
+  datasource:
+    # 默认值面向本地开发；生产由服务器 /opt/meng-x/meng-x.env 注入覆盖
+    url: ${MENGX_DB_URL:jdbc:postgresql://localhost:5432/mengx}
+    username: ${MENGX_DB_USER:mengx}
+    password: ${MENGX_DB_PASSWORD:mengx_local_pwd}
+  jpa:
+    hibernate:
+      ddl-auto: update    # MVP 阶段自动建表；正式上线前建议改 validate + Flyway 迁移
+    open-in-view: false
+
+mengx:
+  jwt:
+    # 开发默认值；生产必须经环境变量注入（server-setup.sh 已随机生成）
+    secret: ${MENGX_JWT_SECRET:meng-x-dev-secret-0123456789abcdef0123456789}
+    ttl-hours: 168        # token 有效期 7 天
+  law:
+    # 法学 RAG 数据源根目录：其下应有 Laws/（LawRefBook/Laws 克隆）。本地默认指向项目旁目录；
+    # 生产由服务器 /opt/meng-x/meng-x.env 注入 MENGX_LAW_DATA_DIR
+    data-dir: ${MENGX_LAW_DATA_DIR:D:/code/project}
+    # 法考真题库根目录：其下应有 客观题/ 与 客观题-答案解析/ 两个 markdown 目录。
+    # 本地 → application-local.yml；生产 → 服务器 meng-x.env 注入 MENGX_LAW_QUESTION_DIR
+    question-dir: ${MENGX_LAW_QUESTION_DIR:}
+    # RAG 向量（OpenAI 兼容 /embeddings）：千问 MaaS qwen3.7-text-embedding-flash，1024 维
+    # 与 law_* 表 DDL 的 vector(1024) 一致；api-key 不入库：
+    # 本地 → application-local.yml；生产 → 服务器 meng-x.env 注入 MENGX_EMBEDDING_API_KEY
+    embedding-model: qwen3.7-text-embedding-flash
+    embedding-dimension: 1024
+    embedding-base-url: ${MENGX_EMBEDDING_BASE_URL:https://maas.qianwenaiapi.com/compatible-mode/v1}
+    embedding-api-key: ${MENGX_EMBEDDING_API_KEY:}
+# 智谱 GLM（原生 ZhipuApi 客户端，thinking 一律 disabled——glm-4.7 为思考型模型，
+# 默认思考首 token 延迟 30~40 秒）。api-key 不入库：
+# 本地开发 → src/main/resources/application-local.yml（已 gitignore，spring.config.import 自动加载）
+# 生产   → 服务器 /opt/meng-x/meng-x.env 的 MENGX_LLM_API_KEY
+ai:
+  model:
+    base-url: https://open.bigmodel.cn/api/paas/v4
+    api-key: ${MENGX_LLM_API_KEY:}
+    # 三档分工：host=前台仙官/法学助手（流式角色扮演）；agent=内部结构化（双星/提炼器/格式化官）；
+    # route=意图路由等轻量二分类（glm-4-flash 非思考快速档）
+    host-name: glm-4.7
+    host-temperature: 0.7
+    host-max-tokens: 2048
+    agent-name: glm-4.7
+    agent-temperature: 0.2
+    agent-max-tokens: 4096
+    route-name: glm-4-flash
+    route-temperature: 0.1
+    route-max-tokens: 256
+    timeout-seconds: 60
+
+# 可观测性（零新增容器）：指标走本机 9913 管理端口（Nginx 只转发 /api，公网不可达），
+# tracing 全采样，traceId/spanId 随每行日志输出（跨环节 grep 定位问题）
+management:
+  server:
+    port: 9913          # 独立管理端口：与主应用隔离，主应用安全链不适用
+    address: 127.0.0.1  # 仅本机可访问
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  tracing:
+    sampling:
+      probability: 1.0  # 信任圈小流量，全采样
+
+logging:
+  pattern:
+    level: "%5p [%X{traceId:-},%X{spanId:-}]"

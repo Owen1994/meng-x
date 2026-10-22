@@ -1,0 +1,22 @@
+# 点子铺后端 systemd 服务
+# 安装位置: /etc/systemd/system/meng-x.service
+# 常用命令: systemctl start|stop|restart|status meng-x
+
+[Unit]
+Description=Meng-X Server (Spring Boot)
+After=network.target
+
+[Service]
+Type=simple
+# 与部署用户一致：CI 上传 jar 到 /opt/meng-x/ 后可直接重启，无权限问题
+User=mengx
+WorkingDirectory=/opt/meng-x
+ExecStart=/usr/bin/java -jar /opt/meng-x/meng-x-server.jar
+Restart=on-failure
+RestartSec=5
+
+# 生产密钥（DB 密码、JWT 密钥等）由 server-setup.sh 生成，不存在时忽略
+EnvironmentFile=-/opt/meng-x/meng-x.env
+
+[Install]
+WantedBy=multi-user.target
