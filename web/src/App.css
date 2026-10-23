@@ -116,6 +116,7 @@
 
 .chat-page {
   height: 100vh;
+  height: 100dvh; /* 移动端地址栏收展时不跳动 */
   display: flex;
   flex-direction: column;
   background: radial-gradient(circle at 50% 0%, #ffffff 0%, #f5f5f7 55%);
@@ -805,9 +806,40 @@
 
 .fc-badge-row {
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-start; /* 状态徽章们靠左成组，不散开 */
+  align-items: center;
   gap: 6px;
   flex-wrap: wrap;
+  margin-bottom: 10px; /* 与下方标题内容拉开间距 */
+}
+
+/* 导出图标按钮：徽章行末尾的角标位（文档级操作，与流转动作行分离）；
+   与状态徽章之间留出间距 + 浅分隔线，避免和 implemented 等徽章黏在一排 */
+.fc-export-btn {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin-left: auto; /* 独占右侧，与左侧徽章组拉开 */
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: transparent;
+  color: #8a8a90;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.fc-export-btn:hover {
+  color: #1d1d1f;
+  border-color: rgba(0, 0, 0, 0.3);
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.fc-export-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 .fc-badge {
@@ -966,6 +998,7 @@
 }
 
 .fc-reason {
+  flex: 1 1 100%; /* 在 fc-ops 换行容器里强制独占一行，不与点赞/谢绝等按钮同行 */
   font-size: 12px;
   color: #6e6e73;
   font-style: italic;
@@ -1047,6 +1080,15 @@
   padding: 22px 28px 8px;
 }
 
+/* 右侧动作区：访客 + 回首页 + 退出固定为一组，始终同基线一行 */
+.board-header-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
 .board-title {
   font-size: 26px;
   font-weight: 600;
@@ -1060,15 +1102,65 @@
 .board-user {
   color: #6e6e73;
   font-size: 14px;
-  margin-left: auto;
 }
 
+/* 看板顶栏退出按钮：盖掉基类 .logout-btn 的 margin-top（24px 会把它压出对齐行） */
+.board-header .logout-btn {
+  margin-top: 0;
+  padding: 4px 16px;
+}
+
+/* 工具栏：主 tab 一行，看板的筛选/操作在第二行（子筛选行） */
 .board-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px; /* 子筛选行与主 tab 再拉开一点，减少视觉粘连 */
+  padding: 14px 28px;
+}
+
+.board-subtoolbar {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 14px 28px;
+}
+
+/* 状态子筛选：轻量文字型 pill，与主 tab 区分层级 */
+.status-tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.sub-chip {
+  padding: 4px 11px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #9a9aa0;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.sub-chip:hover {
+  color: #1d1d1f;
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.sub-chip.active {
+  background: rgba(0, 0, 0, 0.07);
+  color: #1d1d1f;
+  font-weight: 600;
+}
+
+.toolbar-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .toolbar-btn {
@@ -1119,12 +1211,23 @@
   outline: none;
 }
 
+/* 瀑布流改为 JS 分列（见 Board.jsx 的 Masonry）：CSS columns 纵向逐列填充，
+   卡片少时右侧列整列留白；显式分列 + round-robin 保证任何卡数都拉满、无空白列。
+   maxWidth 内联由 JS 按列数计算：卡多时不生效（拉满），卡少时防止列被拉得过宽 */
 .card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  display: flex;
+  align-items: flex-start;
   gap: 18px;
   padding: 12px 28px 60px;
-  align-items: start;
+  margin: 0 auto;
+}
+
+.masonry-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
 }
 
 .board-empty {
@@ -1211,6 +1314,39 @@
   justify-content: flex-end;
   gap: 10px;
   margin-top: 8px;
+}
+
+/* 弹层操作区按钮基础样式（许愿池等）：与项目白灰风格统一的描边胶囊 */
+.modal-actions button {
+  padding: 8px 24px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+  background: transparent;
+  color: #1d1d1f;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.modal-actions button:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+
+/* 主操作（投愿/好嘞/再试一次）：黑底主按钮，与「发送」「交卷」口径一致 */
+.modal-actions .wish-cast-btn {
+  background: #1d1d1f;
+  border-color: transparent;
+  color: #ffffff;
+  font-weight: 600;
+}
+
+.modal-actions .wish-cast-btn:hover {
+  background: #000000;
+}
+
+.modal-actions .wish-cast-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #1d1d1f;
 }
 
 .topic-row {
@@ -1461,11 +1597,12 @@
   padding: 10px 36px;
   border-radius: 999px;
   border: none;
-  background: #8a8a90;
+  background: #1d1d1f;
   color: #ffffff;
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
+  transition: filter 0.15s;
 }
 
 .fortune-draw-btn:hover {
@@ -1647,13 +1784,39 @@
 
 /* ---------- 许愿池 ---------- */
 
+/* 许愿池入口：星光渐变（全站唯一彩色点缀），带闪烁星标与呼吸光晕，营造投愿氛围 */
 .wish-entry-btn {
-  color: #6e6e73;
-  border-color: rgba(0, 0, 0, 0.15);
+  background: linear-gradient(135deg, #3f3a78 0%, #6f5bb5 52%, #a98fd8 100%);
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: 0 2px 12px rgba(100, 80, 180, 0.35);
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  animation: wish-glow 3s ease-in-out infinite;
 }
 
 .wish-entry-btn:hover {
-  background: rgba(0, 0, 0, 0.04);
+  background: linear-gradient(135deg, #4c4690 0%, #7f6cc7 52%, #b9a2e2 100%);
+  box-shadow: 0 4px 18px rgba(100, 80, 180, 0.5);
+  transform: translateY(-1px);
+}
+
+.wish-star {
+  display: inline-block;
+  font-size: 13px;
+  line-height: 1;
+  animation: wish-twinkle 1.8s ease-in-out infinite;
+}
+
+@keyframes wish-twinkle {
+  0%, 100% { opacity: 0.45; transform: scale(0.8) rotate(0deg); }
+  50% { opacity: 1; transform: scale(1.2) rotate(20deg); }
+}
+
+@keyframes wish-glow {
+  0%, 100% { box-shadow: 0 2px 12px rgba(100, 80, 180, 0.3); }
+  50% { box-shadow: 0 2px 18px rgba(120, 95, 200, 0.55); }
 }
 
 .wish-tip {
@@ -1688,15 +1851,6 @@
   color: #8a8a90;
   font-size: 13px;
   line-height: 1.7;
-}
-
-.wish-cast-btn {
-  border-color: rgba(0, 0, 0, 0.16);
-  color: #6e6e73;
-}
-
-.wish-cast-btn:hover {
-  background: rgba(0, 0, 0, 0.04);
 }
 
 /* ---------- 点赞 & 创意榜 ---------- */
@@ -1919,6 +2073,7 @@
   }
   .chat-input {
     padding: 10px 14px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom)); /* 全面屏手势条避让 */
   }
   .chat-input input {
     font-size: 16px; /* 防 iOS 聚焦自动放大 */
@@ -1943,16 +2098,16 @@
     padding: 10px 14px;
     gap: 8px;
   }
-  .status-select {
+  .toolbar-actions {
     margin-left: 0;
+    width: 100%;
+    justify-content: flex-end;
   }
   .wish-modal textarea {
     font-size: 16px; /* 防 iOS 聚焦自动放大 */
   }
   .card-grid {
-    grid-template-columns: 1fr;
     padding: 8px 14px 40px;
-    gap: 14px;
   }
   .fc-ops button,
   .fc-actions button {
@@ -1975,7 +2130,7 @@
     max-width: 86%;
   }
 
-  /* 营造图：单列紧凑，议程隐藏 */
+  /* 营造图：双列紧凑（10 格单列过长），议程隐藏 */
   .design-panel {
     margin: 0 14px 6px;
   }
@@ -1987,7 +2142,7 @@
     display: none;
   }
   .design-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, 1fr);
     gap: 6px;
     padding: 0 10px 10px;
   }
