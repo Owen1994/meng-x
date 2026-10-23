@@ -6,6 +6,38 @@ import PrdModal from '../components/PrdModal';
 /** 优先级徽标配色（高/中/低） */
 const PRIORITY_CLASS = { 高: 'high', 中: 'mid', 低: 'low' };
 
+/** 断点列数（单卡峰值约 400px） */
+const colsForWidth = (w) =>
+  w >= 2501 ? 7 : w >= 2101 ? 6 : w >= 1701 ? 5 : w >= 1281 ? 4 : w >= 851 ? 3 : w >= 641 ? 2 : 1;
+
+/**
+ * JS 分列瀑布流：CSS columns 是纵向逐列填充，卡片少时右侧列整列留白（大屏右侧
+ * 空出两三个卡位的根因）。改为显式分列：列数 = min(断点列数, 卡片数)，
+ * round-robin 分配保持左→右阅读顺序，任何卡数都无空白列；
+ * 卡片过少时按列数收敛 max-width，防止单卡被拉得过宽（多卡时 max-width 不生效仍拉满）。
+ */
+function Masonry({ items, empty, renderItem, className = '' }) {
+  const [vp, setVp] = useState(window.innerWidth);
+  useEffect(() => {
+    const onResize = () => setVp(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  if (!items || items.length === 0) return empty;
+  const n = Math.min(colsForWidth(vp), items.length);
+  const cols = Array.from({ length: n }, () => []);
+  items.forEach((it, i) => cols[i % n].push([it, i]));
+  return (
+    <div className={`card-grid ${className}`} style={{ maxWidth: n * 430 + (n - 1) * 18 }}>
+      {cols.map((col, ci) => (
+        <div className="masonry-col" key={ci}>
+          {col.map(([it, i]) => renderItem(it, i))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /**
  * 功能卡看板（设计方案 §3-⑥⑦ §6 P0-5/6）：
  * 全部卡片瀑布流（创意值优先）+ 状态流转 + 导出。
@@ -153,19 +185,22 @@ export default function Board({ user, onBack, onLogout }) {
     <div className="board-page">
       <header className="board-header">
         <span className="board-title">点子铺 · 功能卡看板</span>
-        <span className="board-user">{user.nickname}</span>
-        <button type="button" className="icon-btn" title="回首页聊" aria-label="回首页聊" onClick={onBack}>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
-            strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M3 10.5L12 3l9 7.5" />
-            <path d="M5 9.5V21h5v-6h4v6h5V9.5" />
-          </svg>
-        </button>
-        <button className="logout-btn" onClick={onLogout}>
-          退出
-        </button>
+        <div className="board-header-actions">
+          <span className="board-user">{user.nickname}</span>
+          <button type="button" className="icon-btn" title="回首页聊" aria-label="回首页聊" onClick={onBack}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+              strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M3 10.5L12 3l9 7.5" />
+              <path d="M5 9.5V21h5v-6h4v6h5V9.5" />
+            </svg>
+          </button>
+          <button className="logout-btn" onClick={onLogout}>
+            退出
+          </button>
+        </div>
       </header>
 
+      {/* 工具栏：主 tab 一行，看板的筛选/操作在第二行（子筛选行） */}
       <div className="board-toolbar">
         <div className="view-tabs">
           <button className={`chip ${view === 'board' ? 'active' : ''}`} onClick={() => setView('board')}>
@@ -182,36 +217,45 @@ export default function Board({ user, onBack, onLogout }) {
           </button>
         </div>
         {view === 'board' && (
-          <>
-            <button className="toolbar-btn wish-entry-btn" onClick={() => setWish({ phase: 'input', text: '' })}>
-              许愿池
-            </button>
-            <button className="toolbar-btn" onClick={() => download('', '点子铺-功能卡清单.md')}>
-              导出全部
-            </button>
-            <select className="status-select" value={status} onChange={(e) => setStatus(e.target.value)}>
-              <option value="">全部状态</option>
+          <div className="board-subtoolbar">
+            <div className="status-tabs">
+              <button className={`sub-chip ${status === '' ? 'active' : ''}`} onClick={() => setStatus('')}>
+                全部
+              </button>
               {Object.entries(STATUS_LABELS).map(([k, v]) => (
-                <option key={k} value={k}>
+                <button key={k} className={`sub-chip ${status === k ? 'active' : ''}`} onClick={() => setStatus(k)}>
                   {v}
-                </option>
+                </button>
               ))}
-            </select>
-          </>
+            </div>
+            <div className="toolbar-actions">
+              <button
+                className="toolbar-btn wish-entry-btn"
+                title="把一句话愿望投进池子，精灵替你炼成功能卡"
+                onClick={() => setWish({ phase: 'input', text: '' })}
+              >
+                <span className="wish-star" aria-hidden="true">✦</span>
+                许愿池
+              </button>
+              <button className="toolbar-btn" onClick={() => download('', '点子铺-功能卡清单.md')}>
+                导出全部
+              </button>
+            </div>
+          </div>
         )}
       </div>
 
       {error && <p className="board-error">{error}</p>}
 
       {view === 'board' && (
-        <div className="card-grid">
-          {cards.length === 0 && (
-            <p className="board-empty">还没有功能卡。回聊天页和百晓通聊聊，点子就长出来了～</p>
-          )}
-          {cards.map((c) => (
+        <Masonry
+          items={cards}
+          empty={<p className="board-empty">还没有功能卡。回聊天页和百晓通聊聊，点子就长出来了～</p>}
+          renderItem={(c) => (
             <FeatureCard
               key={c.id}
               card={c}
+              onExport={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}
               badge={
                 <>
                   <span className={`fc-badge ${STATUS_CLASSES[c.status]}`}>{STATUS_LABELS[c.status]}</span>
@@ -260,57 +304,66 @@ export default function Board({ user, onBack, onLogout }) {
                     {c.status === 'DECLINED' && c.declineReason && (
                       <span className="fc-reason">「{c.declineReason}」</span>
                     )}
-                    <button onClick={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}>导出</button>
                   </div>
                 </div>
               }
             />
-          ))}
-        </div>
+          )}
+        />
       )}
 
       {view === 'wall' && (
-        <div className="card-grid wall-grid">
-          {wallCards === null && <p className="board-empty">推开大门看看…</p>}
-          {wallCards !== null && wallCards.length === 0 && (
-            <p className="board-empty">
-              铺子还在修行中——第一件法宝，正等着从一次闲聊里长出来。
-              <br />
-              和百晓通聊聊，说不定它就是你的点子。
-            </p>
-          )}
-          {wallCards?.map((c) => (
+        <Masonry
+          className="wall-grid"
+          items={wallCards}
+          empty={
+            <>
+              {wallCards === null && <p className="board-empty">推开大门看看…</p>}
+              {wallCards !== null && wallCards.length === 0 && (
+                <p className="board-empty">
+                  铺子还在修行中——第一件法宝，正等着从一次闲聊里长出来。
+                  <br />
+                  和百晓通聊聊，说不定它就是你的点子。
+                </p>
+              )}
+            </>
+          }
+          renderItem={(c) => (
             <FeatureCard
               key={c.id}
               card={c}
+              onExport={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}
               badge={<span className="fc-badge implemented">已实现</span>}
               footer={
                 <div className="fc-footer">
                   <span className="fc-source wall-source">
                     {c.nickname} 提出 · 修成于 {new Date(c.updatedAt).toLocaleDateString()}
                   </span>
-                  <div className="fc-ops">
-                    <button onClick={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}>导出</button>
-                  </div>
                 </div>
               }
             />
-          ))}
-        </div>
+          )}
+        />
       )}
 
       {view === 'mine' && (
-        <div className="card-grid">
-          {mineCards === null && <p className="board-empty">翻你的点子簿…</p>}
-          {mineCards !== null && mineCards.length === 0 && (
-            <p className="board-empty">
-              你还没有留下点子。回聊天页和百晓通聊聊，第一个点子就从这里长出来～
-            </p>
-          )}
-          {mineCards?.map((c) => (
+        <Masonry
+          items={mineCards}
+          empty={
+            <>
+              {mineCards === null && <p className="board-empty">翻你的点子簿…</p>}
+              {mineCards !== null && mineCards.length === 0 && (
+                <p className="board-empty">
+                  你还没有留下点子。回聊天页和百晓通聊聊，第一个点子就从这里长出来～
+                </p>
+              )}
+            </>
+          }
+          renderItem={(c) => (
             <FeatureCard
               key={c.id}
               card={c}
+              onExport={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}
               badge={<span className={`fc-badge ${STATUS_CLASSES[c.status]}`}>{STATUS_LABELS[c.status]}</span>}
               footer={
                 <div className="fc-footer">
@@ -319,26 +372,29 @@ export default function Board({ user, onBack, onLogout }) {
                     {c.status === 'IMPLEMENTED' && ` · 修成于 ${new Date(c.updatedAt).toLocaleDateString()}`}
                     {c.likeCount > 0 && ` · ❤ ${c.likeCount}`}
                   </span>
-                  <div className="fc-ops">
-                    <button onClick={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}>导出</button>
-                  </div>
                 </div>
               }
             />
-          ))}
-        </div>
+          )}
+        />
       )}
 
       {view === 'rank' && (
-        <div className="card-grid">
-          {rankCards === null && <p className="board-empty">揭示榜单中…</p>}
-          {rankCards !== null && rankCards.length === 0 && (
-            <p className="board-empty">还没有点子收到香火。去给你喜欢的点子添一炷香，把它顶上榜～</p>
-          )}
-          {rankCards?.map((c, i) => (
+        <Masonry
+          items={rankCards}
+          empty={
+            <>
+              {rankCards === null && <p className="board-empty">揭示榜单中…</p>}
+              {rankCards !== null && rankCards.length === 0 && (
+                <p className="board-empty">还没有点子收到香火。去给你喜欢的点子添一炷香，把它顶上榜～</p>
+              )}
+            </>
+          }
+          renderItem={(c, i) => (
             <FeatureCard
               key={c.id}
               card={c}
+              onExport={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}
               badge={
                 <>
                   <span className={`rank-no rank-${i + 1}`}>第{i + 1}名</span>
@@ -358,13 +414,12 @@ export default function Board({ user, onBack, onLogout }) {
                     >
                       ❤ {c.likeCount}
                     </button>
-                    <button onClick={() => download(`cardId=${c.id}`, `点子铺-${c.title}.md`)}>导出</button>
                   </div>
                 </div>
               }
             />
-          ))}
-        </div>
+          )}
+        />
       )}
 
       {wish && (

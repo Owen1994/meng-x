@@ -17,9 +17,10 @@ export const STATUS_CLASSES = {
 /**
  * 功能卡展示组件（双层卡：访谈气泡与看板共用）。
  * 上层主卡四要素；下层「方案卷轴」折叠展示仙班共创的设计沉淀。
- * badge：状态徽章等顶部内容；footer：操作区（确认/状态流转/导出）。
+ * badge：状态徽章等顶部内容；footer：操作区（确认/状态流转/导出）；
+ * onExport：传入则在徽章行末尾渲染导出图标按钮（文档级操作，与流转动作分行）。
  */
-export default function FeatureCard({ card, badge, footer, className = '' }) {
+export default function FeatureCard({ card, badge, footer, onExport, className = '' }) {
   let design = null;
   try {
     design = card.designJson ? JSON.parse(card.designJson) : null;
@@ -40,7 +41,21 @@ export default function FeatureCard({ card, badge, footer, className = '' }) {
 
   return (
     <div className={`feature-card ${className}`}>
-      {badge && <div className="fc-badge-row">{badge}</div>}
+      {badge && (
+        <div className="fc-badge-row">
+          {badge}
+          {onExport && (
+            <button type="button" className="fc-export-btn" title="导出施工文档" aria-label="导出施工文档" onClick={onExport}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+                strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 3v12" />
+                <polyline points="7 10 12 15 17 10" />
+                <path d="M5 21h14" />
+              </svg>
+            </button>
+          )}
+        </div>
+      )}
       <div className="fc-title">
         {card.scale === '应用' && <span className="fc-app-tag">应用</span>}
         {card.title}
