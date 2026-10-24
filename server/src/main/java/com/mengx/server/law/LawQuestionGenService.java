@@ -1,7 +1,10 @@
 package com.mengx.server.law;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mengx.server.agent.AgentRunner;
+import com.mengx.server.law.agent.GenOutput;
+import com.mengx.server.law.agent.GenQuestion;
+import com.mengx.server.law.agent.GenSubjective;
+import com.mengx.server.law.agent.LawAgentFactory;
 import com.mengx.server.llm.LlmUsage;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -16,6 +19,7 @@ import org.springframework.stereotype.Service;
  * 出题官（法学域内子能力，不进全局路由，由法学通道内的出题意图触发）：
  * 法条检索上下文 → glm-4.7 严格 JSON 出题 → law_questions 落库（source=generated，幂等 + 向量化）。
  * 判分：客观题字母比对 + law_answer_records 记录，纯代码零模型调用，即时反馈。
+ * LLM 契约（出题 prompt/JSON 绑定）在 com.mengx.server.law.agent.LawQuestionGenAgent。
  */
 @Service
 public class LawQuestionGenService {
@@ -25,19 +29,19 @@ public class LawQuestionGenService {
     /** 一组题量（逐题生成，调用方按此数循环） */
     public static final int QUESTION_COUNT = 3;
 
-    private final AgentRunner agentRunner;
+    private final LawAgentFactory agents;
     private final LawQuestionRepository questionRepository;
     private final LawAnswerRecordRepository answerRecordRepository;
     private final LawEmbeddingClient embeddingClient;
     private final ObjectMapper objectMapper;
 
     public LawQuestionGenService(
-            AgentRunner agentRunner,
+            LawAgentFactory agents,
             LawQuestionRepository questionRepository,
             LawAnswerRecordRepository answerRecordRepository,
             LawEmbeddingClient embeddingClient,
             ObjectMapper objectMapper) {
-        this.agentRunner = agentRunner;
+        this.agents = agents;
         this.questionRepository = questionRepository;
         this.answerRecordRepository = answerRecordRepository;
         this.embeddingClient = embeddingClient;
@@ -57,48 +61,6 @@ public class LawQuestionGenService {
 
     /** 判分结果 */
     public record JudgeOutcome(boolean correct, boolean alreadyAnswered, String expected, String analysis) {}
-
-    // 出题模型输出 DTO（camelCase 字段与出题 prompt 对齐）
-    private record GenOption(String key, String text) {}
-    private record GenQuestion(String stem, List<GenOption> options, String answer,
-                               String analysis, List<String> knowledgePoints, Integer difficulty) {}
-    private record GenOutput(List<GenQuestion> questions) {}
-    private record GenScoringPoint(String point, Integer score) {}
-    private record GenSubjective(String stem, String answer, String analysis,
-                                 List<GenScoringPoint> scoringPoints,
-                                 List<String> knowledgePoints, Integer difficulty) {}
-
-    private static final String GEN_SYSTEM_PROMPT = """
-            你是法考出题官，专门为法考备考学生出高质量练习题。
-            硬性要求：
-            1. 题型分三种：「单选」四个选项只有一个正确答案；「多选」「不定项」有 2~4 个正确答案。题干为小案例或概念辨析，选项 key 为 A/B/C/D；干扰项取法考常见易错点，必须有区分度，不许凑数
-            2. answer 字段：单选为一个字母（如"A"）；多选/不定项为全部正确选项字母（如"ABD"）
-            3. 解析要讲清考点与推理，并引用所依据的《法名》第X条——有【法条库检索结果】时以其为准；没有检索结果时凭所学出题，解析注明出处提醒核对
-            4. knowledgePoints 为 1~3 个考点标签（如"善意取得""表见代理"）；difficulty 为 1~5 整数
-            5. 严格按主题与指定题型出题，本次只出 1 题；主题未指明时依据检索上下文自选高频考点
-            6. 有【历年真题参照】时，参考其题干风格与干扰项设计套路出题，禁止复述或换皮原题
-            7. 有【本组已出考点】时，本题必须避开这些考点，同组题不许重复考一个点
-            8. 有【学情参考】时按其倾向出题：弱点考点优先覆盖，已稳考点降频，难度贴合该生档位
-            只输出 JSON 对象，不要 markdown 围栏、不要任何解释文字，格式：
-            {"questions":[{"stem":"题干","type":"题型","options":[{"key":"A","text":"…"},{"key":"B","text":"…"},{"key":"C","text":"…"},{"key":"D","text":"…"}],"answer":"A","analysis":"解析（含《法名》第X条）","knowledgePoints":["考点"],"difficulty":3}]}
-            """;
-
-    private static final String SUBJ_SYSTEM_PROMPT = """
-            你是法考出题官，专门为法考备考学生出一道高质量主观题（案例分析）。
-            硬性要求：
-            1. 题干为一段小案例（150~300 字）加设问（一至两问），贴合法考主观题真题的命题风格
-            2. answer 为参考答案要点串联（200 字内），要点与采分点一一呼应
-            3. scoringPoints 为 3~5 个采分点，总分恰好 10 分；每个采分点必须是可独立判定对错的实质要点
-               （构成要件辨析、法条援引、结论与说理），不许是"表述清晰"这类无法判定的虚点
-            4. analysis 讲考点与命题思路，并引用所依据的《法名》第X条——有【法条库检索结果】时以其为准；
-               没有检索结果时凭所学出题，解析注明出处提醒核对
-            5. knowledgePoints 为 1~3 个考点标签；difficulty 为 1~5 整数
-            6. 严格按主题出题；主题未指明时依据检索上下文自选高频考点
-            7. 有【历年真题参照】时，参考其命题风格出题，禁止复述或换皮原题
-            8. 有【学情参考】时按其倾向出题：弱点考点优先覆盖，难度贴合该生档位
-            只输出 JSON 对象，不要 markdown 围栏、不要任何解释文字，格式：
-            {"stem":"案例+设问","answer":"参考答案要点","analysis":"解析（含《法名》第X条）","scoringPoints":[{"point":"采分点","score":3}],"knowledgePoints":["考点"],"difficulty":3}
-            """;
 
     /**
      * 单题生成（逐题调用逐题下发，缩短首题等待）：检索上下文作依据 + 相近真题作风格参照
@@ -127,7 +89,10 @@ public class LawQuestionGenService {
         LlmUsage.set("quiz_gen"); // 用量观测：出题官场景标记（仅包裹模型调用段，检索/落库不占）
         GenOutput out;
         try {
-            out = agentRunner.runForJson(GEN_SYSTEM_PROMPT, userPrompt, GenOutput.class).orElse(null);
+            out = agents.questionGen().generateObjective(userPrompt);
+        } catch (Exception e) {
+            log.warn("出题官客观题模型调用失败（topic={}，第 {} 题）：{}", topic, no, e.getMessage());
+            out = null;
         } finally {
             LlmUsage.clear();
         }
@@ -179,7 +144,10 @@ public class LawQuestionGenService {
         LlmUsage.set("quiz_gen"); // 用量观测：与客观出题同场景标记
         GenSubjective q;
         try {
-            q = agentRunner.runForJson(SUBJ_SYSTEM_PROMPT, userPrompt, GenSubjective.class).orElse(null);
+            q = agents.questionGen().generateSubjective(userPrompt);
+        } catch (Exception e) {
+            log.warn("出题官主观题模型调用失败（topic={}）：{}", topic, e.getMessage());
+            q = null;
         } finally {
             LlmUsage.clear();
         }

@@ -1,6 +1,6 @@
 package com.mengx.server.idea;
 
-import com.mengx.server.agent.AgentRunner;
+import com.mengx.server.idea.agent.IdeaAgentFactory;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -25,28 +25,20 @@ public class IdeaThanksService {
     private static final DateTimeFormatter DATE_FMT =
             DateTimeFormatter.ofPattern("yyyy-MM-dd").withZone(ZoneId.systemDefault());
 
-    private static final String THANKS_PROMPT = """
-            你是仙官「百晓仙君」。一位朋友提出的点子被实现上线了，
-            你要亲手给这位恩人写一张感谢卡。自称"老朽"，说话带一点点古文雅味，
-            真诚温暖不煽情，150 字以内，不用 markdown，不逐条编号。
-            内容要提到：这个点子带来的好处或小故事回顾（一两句）、
-            因为这个点子你又多修成了一样本事，让提出人真切感到他的想法被认真对待了。
-            直接输出感谢卡正文，不要任何前缀、落款或解释。""";
-
     /** 感谢卡对外结构（聊天页弹层展示） */
     public record ThanksDto(Long id, String cardTitle, String content, String proposedAt) {}
 
-    private final AgentRunner agentRunner;
+    private final IdeaAgentFactory ideaAgents;
     private final IdeaCardRepository cardRepository;
     private final IdeaSessionRepository sessionRepository;
     private final IdeaThanksRepository thanksRepository;
 
     public IdeaThanksService(
-            AgentRunner agentRunner,
+            IdeaAgentFactory ideaAgents,
             IdeaCardRepository cardRepository,
             IdeaSessionRepository sessionRepository,
             IdeaThanksRepository thanksRepository) {
-        this.agentRunner = agentRunner;
+        this.ideaAgents = ideaAgents;
         this.cardRepository = cardRepository;
         this.sessionRepository = sessionRepository;
         this.thanksRepository = thanksRepository;
@@ -75,7 +67,7 @@ public class IdeaThanksService {
         if (userId == null) {
             return;
         }
-        String content = agentRunner.run(THANKS_PROMPT, thanksInput(card));
+        String content = ideaAgents.thanks().writeCard(thanksInput(card));
         if (content == null || content.isBlank()) {
             return;
         }

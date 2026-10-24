@@ -10,7 +10,7 @@ import java.time.Instant;
 
 /**
  * 访谈消息：一场对话的服务端持久化（换设备/清缓存不丢聊天记录）。
- * role：user（访客发言）| assistant（主理人回复）| card（功能卡占位，content=卡片 id；
+ * role：user（访客发言）| assistant（主对话回复）| card（功能卡占位，content=卡片 id；
  * 卡片被丢弃后渲染时按 id 查不到即跳过）。
  */
 @Entity
@@ -33,12 +33,21 @@ public class IdeaMessageEntity {
     @Column(nullable = false, updatable = false)
     private Instant createdAt = Instant.now();
 
+    /** 一轮对话的幂等键（前端生成）：同一轮重发只落库一次；counsel/card 之外的半截消息为 null */
+    @Column(name = "client_round_id", length = 64)
+    private String clientRoundId;
+
     protected IdeaMessageEntity() {}
 
     public IdeaMessageEntity(Long sessionId, String role, String content) {
+        this(sessionId, role, content, null);
+    }
+
+    public IdeaMessageEntity(Long sessionId, String role, String content, String clientRoundId) {
         this.sessionId = sessionId;
         this.role = role;
         this.content = content;
+        this.clientRoundId = clientRoundId;
     }
 
     public Long getId() {
@@ -59,5 +68,9 @@ public class IdeaMessageEntity {
 
     public Instant getCreatedAt() {
         return createdAt;
+    }
+
+    public String getClientRoundId() {
+        return clientRoundId;
     }
 }

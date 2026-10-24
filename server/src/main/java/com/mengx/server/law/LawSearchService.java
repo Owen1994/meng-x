@@ -30,9 +30,9 @@ public class LawSearchService {
     private static final Logger log = LoggerFactory.getLogger(LawSearchService.class);
 
     /** 单路召回条数（RRF 融合前） */
-    private static final int RECALL_K = 8;
+    private static final int RECALL_K = 20;
     /** 融合后最终返回条数 */
-    private static final int TOP_N = 5;
+    private static final int TOP_N = 15;
     /** RRF 平滑常数（标准值 60） */
     private static final int RRF_K = 60;
 

@@ -3,6 +3,7 @@ import { api, getToken, clearToken } from './api';
 import Login from './pages/Login';
 import Chat from './pages/Chat';
 import Board from './pages/Board';
+import ForgeChat from './pages/ForgeChat';
 import './App.css';
 
 export default function App() {
@@ -40,8 +41,25 @@ export default function App() {
     setView('chat');
   };
 
-  if (view === 'board') {
-    return <Board user={user} onBack={() => setView('chat')} onLogout={logout} />;
+  if (view?.forge) {
+    return <ForgeChat jobId={view.forge} onBack={() => setView('chat')} onLogout={logout} />;
   }
-  return <Chat user={user} onOpenBoard={() => setView('board')} onLogout={logout} />;
+  if (view === 'board') {
+    return (
+      <Board
+        user={user}
+        onBack={() => setView('chat')}
+        onOpenForge={(jobId) => setView({ forge: jobId })}
+        onLogout={logout}
+      />
+    );
+  }
+  return (
+    <Chat
+      user={user}
+      onOpenBoard={() => setView('board')}
+      onOpenForge={(jobId) => setView({ forge: jobId })}
+      onLogout={logout}
+    />
+  );
 }

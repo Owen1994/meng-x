@@ -27,7 +27,11 @@ public class IdeaCardEntity {
     public static final String PRD_DONE = "DONE";
     public static final String PRD_FAILED = "FAILED";
 
-    /** 体量：功能（铺子里一项能力的小点子）/ 应用（要拆多模块、值得立项的复合大点子） */
+    /** 施工包状态：NONE 未开工；在制随工单状态流转（RUNNING/WAITING_USER/REVIEW…），终态 DONE/FAILED/CANCELLED */
+    public static final String BUILD_NONE = "NONE";
+    public static final String BUILD_DONE = "DONE";
+
+    /** 体量：功能（本产品一项能力的小点子）/ 应用（要拆多模块、值得立项的复合大点子） */
     public static final String SCALE_FUNCTION = "功能";
     public static final String SCALE_APP = "应用";
 
@@ -38,7 +42,7 @@ public class IdeaCardEntity {
     @Column(nullable = false)
     private Long sessionId;
 
-    /** 来源合伙人昵称，永久署名 */
+    /** 来源客人昵称，永久署名 */
     @Column(nullable = false, length = 30)
     private String nickname;
 
@@ -66,7 +70,7 @@ public class IdeaCardEntity {
     @Column(length = 200)
     private String fallback;
 
-    /** 创意值：主理人评 1~5 星新颖度 */
+    /** 创意值：卡片装配时 AI 评 1~5 星新颖度 */
     @Column(nullable = false)
     private Integer creativity;
 
@@ -77,15 +81,15 @@ public class IdeaCardEntity {
     @Column(length = 200)
     private String declineReason;
 
-    /** 优先级（高/中/低）：仙班锦囊给出的投入建议，取代原评审团 */
+    /** 优先级（高/中/低）：设计简报给出的投入建议，取代原评审团 */
     @Column(length = 10)
     private String priority;
 
-    /** 体量：功能 / 应用（应用卡的卷轴承载应用蓝图，PRD 车间出蓝图文档） */
+    /** 体量：功能 / 应用（应用卡的卷轴承载应用蓝图，PRD 格式化出蓝图文档） */
     @Column(length = 10)
     private String scale;
 
-    /** 方案卷轴（双层卡的下层）：仙班共创的设计沉淀 JSON {approach,boundary,acceptance} */
+    /** 方案卷轴（双层卡的下层）：需求澄清共创的设计沉淀 JSON {approach,boundary,acceptance} */
     @Column(columnDefinition = "text")
     private String designJson;
 
@@ -106,6 +110,24 @@ public class IdeaCardEntity {
     /** 最近一次 PRD 出稿时间 */
     @Column
     private Instant prdGeneratedAt;
+
+    /**
+     * 回路 B 施工包状态（工单进度在卡片侧的镜像，与 prdStatus 平行互不影响）：
+     * NONE 未开工；在制随 forge_jobs.status 流转；终态 DONE/FAILED/CANCELLED。
+     */
+    // 不带 columnDefinition：Hibernate 6.6 的 ddl-auto=update 会把整串 columnDefinition 当列类型比对，
+    // 含 not null/default 时会对 PG 生成非法的「set data type varchar(20) not null default 'NONE'」。
+    // 列默认值由建列时的一次性 DDL 保证存量数据，新插入靠 Java 字段初始化 BUILD_NONE。
+    @Column(nullable = false, length = 20)
+    private String buildStatus = BUILD_NONE;
+
+    /** 工部产出的施工包（markdown 文本，DONE 后经 /build 接口下载投喂 AI 编程工具） */
+    @Column(columnDefinition = "text")
+    private String buildJson;
+
+    /** 最近一次施工包出稿时间 */
+    @Column
+    private Instant buildGeneratedAt;
 
     protected IdeaCardEntity() {}
 
@@ -142,7 +164,7 @@ public class IdeaCardEntity {
         this.updatedAt = Instant.now();
     }
 
-    /** 炼卡时随方案卷轴一并写入（体量 + 仙班共创的设计沉淀 + 优先级） */
+    /** 规格定稿时随方案卷轴一并写入（体量 + 需求澄清共创的设计沉淀 + 优先级） */
     public void applyDesign(String scale, String priority, String designJson) {
         this.scale = SCALE_APP.equals(scale) ? SCALE_APP : SCALE_FUNCTION;
         this.priority = priority == null || priority.isBlank() ? null : priority.trim();
@@ -155,6 +177,16 @@ public class IdeaCardEntity {
         this.prdJson = json;
         if (PRD_DONE.equals(status)) {
             this.prdGeneratedAt = Instant.now();
+        }
+    }
+
+    /** 回路 B 施工包状态流转并记录产出（DONE 时记录时间；与 PRD 车间平行互不影响） */
+    public void markBuild(String status, String json) {
+        this.buildStatus = status;
+        this.buildJson = json;
+        this.updatedAt = Instant.now();
+        if (BUILD_DONE.equals(status)) {
+            this.buildGeneratedAt = Instant.now();
         }
     }
 
@@ -236,5 +268,17 @@ public class IdeaCardEntity {
 
     public Instant getPrdGeneratedAt() {
         return prdGeneratedAt;
+    }
+
+    public String getBuildStatus() {
+        return buildStatus == null ? BUILD_NONE : buildStatus;
+    }
+
+    public String getBuildJson() {
+        return buildJson;
+    }
+
+    public Instant getBuildGeneratedAt() {
+        return buildGeneratedAt;
     }
 }

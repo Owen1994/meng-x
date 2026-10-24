@@ -20,7 +20,7 @@ public class LlmUsageLogEntity {
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 
-    /** 调用场景：chat（主聊流式）/ route（路由）/ extractor（提炼器）/ counsel（双星）/ quiz_gen（出题）/ sync */
+    /** 调用场景：chat（主聊流式）/ route（路由）/ extractor（卡片装配，键名沿用旧提炼器口径）/ counsel（双官）/ quiz_gen（出题）/ sync */
     @Column(length = 32)
     private String scene;
 

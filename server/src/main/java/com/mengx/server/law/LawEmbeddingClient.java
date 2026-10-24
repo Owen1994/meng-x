@@ -29,7 +29,7 @@ public class LawEmbeddingClient {
     private static final int BATCH_SIZE = 16;
     /** 批间隔（ms）：主动限速，压平瞬时调用频率 */
     private static final long BATCH_INTERVAL_MS = 500;
-    /** 失败退避（ms），与 AgentRunner 对齐 */
+    /** 失败退避（ms）：限流时与 ChatModel 的 maxRetries 重试节奏对齐 */
     private static final long RETRY_BACKOFF_MS = 2000;
 
     private final RestClient restClient;
@@ -37,7 +37,7 @@ public class LawEmbeddingClient {
     private final String apiKey;
     private final String model;
     private final int dimensions;
-    /** embedding 指标：批耗时 / 失败数 / 向量化条数（千问 MaaS 调用不走 ZhipuApi，单独打点） */
+    /** embedding 指标：批耗时 / 失败数 / 向量化条数（千问 MaaS 调用不走 GLM ChatModel，单独打点） */
     private final Timer batchLatency;
     private final Counter errorCounter;
     private final Counter textsCounter;

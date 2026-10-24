@@ -1,7 +1,9 @@
 package com.mengx.server.law;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.mengx.server.agent.AgentRunner;
+import com.mengx.server.law.agent.GenGrade;
+import com.mengx.server.law.agent.GenGrade.GenPoint;
+import com.mengx.server.law.agent.LawAgentFactory;
 import com.mengx.server.llm.LlmUsage;
 import java.util.ArrayList;
 import java.util.List;
@@ -14,6 +16,7 @@ import org.springframework.stereotype.Service;
  * 输入题干+采分点+参考答案+作答 → 严格 JSON 判分（score/total/逐点 verdict）→
  * law_answer_records 落库（answer_text 全文、score 得分率 0~100、details 逐点判定、is_correct≥60 及格）。
  * 批改失败返回 null（调用方兜底提示，不阻断会话）。
+ * LLM 契约（判卷 prompt/JSON 绑定）在 com.mengx.server.law.agent.LawJudgeAgent。
  */
 @Service
 public class LawSubjectiveJudgeService {
@@ -35,35 +38,17 @@ public class LawSubjectiveJudgeService {
     public record GradeOutcome(boolean alreadyAnswered, Integer score, Integer total,
             List<PointVerdict> points, String summary, String missing, String referenceAnswer) {}
 
-    // 批改模型输出 DTO（camelCase 与批改 prompt 对齐）
-    private record GenPoint(String point, String verdict, String comment) {}
-    private record GenGrade(Integer score, Integer total, List<GenPoint> points,
-            String summary, String missing) {}
-
-    private static final String GRADE_SYSTEM_PROMPT = """
-            你是法考判卷官，按采分点对主观题作答逐点判分。
-            规则：
-            1. 逐采分点判定 verdict：hit=要点完整命中；partial=沾到实质但不完整；miss=未命中
-            2. comment 一句话点评该点得失（对在哪/缺在哪）
-            3. score 为该题总得分（0~total 整数），按各采分点命中程度累计，与 verdict 自洽（全 hit=满分，全 miss=0 分）
-            4. summary 一两句总评：先肯定作答得力处，再点出最主要的问题
-            5. missing 一两句补充作答遗漏的关键要点（确实没有遗漏写"无"）
-            6. 只看法律分析与事实对应，喊口号而无法律论证记 miss；语言瑕疵不扣分
-            只输出 JSON 对象，不要 markdown 围栏、不要任何解释文字，格式：
-            {"score":7,"total":10,"points":[{"point":"采分点","verdict":"hit","comment":"…"}],"summary":"…","missing":"…"}
-            """;
-
-    private final AgentRunner agentRunner;
+    private final LawAgentFactory agents;
     private final LawQuestionRepository questionRepository;
     private final LawAnswerRecordRepository answerRecordRepository;
     private final ObjectMapper objectMapper;
 
     public LawSubjectiveJudgeService(
-            AgentRunner agentRunner,
+            LawAgentFactory agents,
             LawQuestionRepository questionRepository,
             LawAnswerRecordRepository answerRecordRepository,
             ObjectMapper objectMapper) {
-        this.agentRunner = agentRunner;
+        this.agents = agents;
         this.questionRepository = questionRepository;
         this.answerRecordRepository = answerRecordRepository;
         this.objectMapper = objectMapper;
@@ -100,7 +85,10 @@ public class LawSubjectiveJudgeService {
         LlmUsage.set("grade"); // 用量观测：判卷官场景
         GenGrade g;
         try {
-            g = agentRunner.runForJson(GRADE_SYSTEM_PROMPT, userPrompt, GenGrade.class).orElse(null);
+            g = agents.judge().grade(userPrompt);
+        } catch (Exception e) {
+            log.warn("判卷官模型调用失败（questionId={}）：{}", questionId, e.getMessage());
+            g = null;
         } finally {
             LlmUsage.clear();
         }

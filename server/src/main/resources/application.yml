@@ -36,15 +36,16 @@ mengx:
     embedding-dimension: 1024
     embedding-base-url: ${MENGX_EMBEDDING_BASE_URL:https://maas.qianwenaiapi.com/compatible-mode/v1}
     embedding-api-key: ${MENGX_EMBEDDING_API_KEY:}
-# 智谱 GLM（原生 ZhipuApi 客户端，thinking 一律 disabled——glm-4.7 为思考型模型，
+# 智谱 GLM（langchain4j 官方社区客户端，thinking 一律 disabled——glm-4.7 为思考型模型，
 # 默认思考首 token 延迟 30~40 秒）。api-key 不入库：
 # 本地开发 → src/main/resources/application-local.yml（已 gitignore，spring.config.import 自动加载）
 # 生产   → 服务器 /opt/meng-x/meng-x.env 的 MENGX_LLM_API_KEY
 ai:
   model:
-    base-url: https://open.bigmodel.cn/api/paas/v4
+    # 官方客户端在主机根后自行拼接 api/paas/v4/...，base-url 只填主机根
+    base-url: https://open.bigmodel.cn/
     api-key: ${MENGX_LLM_API_KEY:}
-    # 三档分工：host=前台仙官/法学助手（流式角色扮演）；agent=内部结构化（双星/提炼器/格式化官）；
+    # 三档分工：host=前台主对话/法学助手（流式角色扮演）；agent=内部结构化（需求澄清双官/观察器/装配器/PRD 格式化器）；
     # route=意图路由等轻量二分类（glm-4-flash 非思考快速档）
     host-name: glm-4.7
     host-temperature: 0.7

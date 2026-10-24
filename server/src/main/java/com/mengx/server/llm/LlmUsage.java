@@ -3,7 +3,8 @@ package com.mengx.server.llm;
 /**
  * LLM 用量观测的静态枢纽（可观测性 P1）：
  * scene 经 ThreadLocal 标记（调用方 try/finally 设置与清理），未标记时按模型+流式推断兜底；
- * ZhipuApi 每次调用结束（成功/失败）经 report 上报，LlmUsageRecorder 注册为监听者落库。
+ * 各模型 Bean 注册的 ZhipuUsageListener（langchain4j ChatModelListener）每次调用结束
+ * （成功/失败）经 report 上报，LlmUsageRecorder 注册为监听者落库。
  * 监听者异常静默吞掉——观测永不影响主流程。
  */
 public final class LlmUsage {

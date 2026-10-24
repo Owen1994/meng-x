@@ -9,7 +9,7 @@ import jakarta.persistence.Table;
 import java.time.Instant;
 
 /**
- * 感谢卡（叙事闭环）：点子修成（已实现）后，主理人给提出人的答谢。
+ * 感谢卡（叙事闭环）：点子修成（已实现）后，主对话代理给提出人的答谢。
  * 用户进聊天页时弹层展示，关闭即标已读；一张功能卡至多递一张。
  */
 @Entity

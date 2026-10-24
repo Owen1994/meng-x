@@ -23,6 +23,7 @@ public record IdeaCardDto(
         String designJson,
         String prdStatus,
         String prdJson,
+        String buildStatus,
         long likeCount,
         boolean liked) {
 
@@ -52,6 +53,7 @@ public record IdeaCardDto(
                 c.getDesignJson(),
                 c.getPrdStatus(),
                 c.getPrdJson(),
+                c.getBuildStatus(),
                 likeCount,
                 liked);
     }

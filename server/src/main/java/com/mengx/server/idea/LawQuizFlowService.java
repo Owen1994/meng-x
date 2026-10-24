@@ -83,6 +83,9 @@ public class LawQuizFlowService {
     /**
      * 法学域子意图总入口：出题/重发、交卷、学情汇报任一命中即完成整轮返回 true；
      * 都不是返回 false，调用方走正常法学问答。
+     * <p>关流契约（强约束）：返回 true 表示本方法已接管整轮，实现方必须保证最终发出
+     * done 或 error 事件并调用 sink.complete()，否则前端会永久挂起等待；
+     * 返回 false 时不得触碰 sink。新增分支务必沿用该契约。
      */
     public boolean handle(FluxSink<IdeaChatService.StreamEvent> sink,
             IdeaSessionEntity session, List<IdeaChatService.InMessage> history) {
@@ -162,7 +165,7 @@ public class LawQuizFlowService {
             return false;
         }
         log.info("学情汇报流程开讲（sessionId={}）", session.getId());
-        sink.next(new IdeaChatService.StreamEvent("thinking", "翻看你的答题簿…"));
+        sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.THINKING, "翻看你的答题簿…"));
         String report = lawProfile.report(session.getUserId());
         String reply = report != null ? report
                 : "答题簿还空着——先练一组（说「出几道题」便是），再唤老朽替你盘账不迟。";
@@ -171,8 +174,8 @@ public class LawQuizFlowService {
         } catch (Exception e) {
             log.warn("学情汇报落库失败（不影响展示）：{}", e.getMessage());
         }
-        sink.next(new IdeaChatService.StreamEvent("chunk", reply));
-        sink.next(new IdeaChatService.StreamEvent("done", null));
+        sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, reply));
+        sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
         sink.complete();
         return true;
     }
@@ -209,7 +212,7 @@ public class LawQuizFlowService {
     private void newQuiz(FluxSink<IdeaChatService.StreamEvent> sink, IdeaSessionEntity session,
             List<IdeaChatService.InMessage> history, String triggerText, PendingQuiz pending) {
         log.info("出题流程开讲（sessionId={}，trigger={}）", session.getId(), triggerText);
-        sink.next(new IdeaChatService.StreamEvent("thinking", "出题官正在拟题，好题约需半盏茶功夫，逐题呈上…"));
+        sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.THINKING, "出题官正在拟题，好题约需半盏茶功夫，逐题呈上…"));
         try {
             // 触发词剥净后没剩主题（如"继续出"），沿用上一组主题
             String topic = triggerText;
@@ -226,17 +229,17 @@ public class LawQuizFlowService {
             List<com.mengx.server.law.LawQuestionEntity> examRefs = lawSearch.searchExamQuestions(
                     topic == null || topic.isBlank() ? triggerText : topic, 2);
             if (!examRefs.isEmpty()) {
-                sink.next(new IdeaChatService.StreamEvent("thinking",
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.THINKING,
                         "翻出 " + examRefs.size() + " 道相近真题作参照…"));
             }
             // 学情注入（画像 P1）：有答题记录时弱点加权、已稳降频（零记录不注入，出题官凭检索自选）
             String briefing = lawProfile.quizBriefing(session.getUserId());
             if (!briefing.isBlank()) {
-                sink.next(new IdeaChatService.StreamEvent("thinking", "翻看你的学情簿，照弱点下题…"));
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.THINKING, "翻看你的学情簿，照弱点下题…"));
             }
             String intro = "好，这就出题——逐题呈上，各题点选你的答案，选满后按「交卷」，老朽当场讲评。";
             saveQuizRound(session.getId(), history, intro);
-            sink.next(new IdeaChatService.StreamEvent("chunk", intro));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, intro));
             List<LawQuestionGenService.QuizQuestion> questions = new ArrayList<>();
             List<String> usedPoints = new ArrayList<>();
             for (int no = 1; no <= LawQuestionGenService.QUESTION_COUNT; no++) {
@@ -250,22 +253,22 @@ public class LawQuizFlowService {
                     usedPoints.addAll(q.knowledgePoints());
                 }
                 questions.add(q);
-                sink.next(new IdeaChatService.StreamEvent("question", toJsonValue(q)));
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.QUESTION, toJsonValue(q)));
             }
             if (questions.isEmpty()) {
-                sink.next(new IdeaChatService.StreamEvent("chunk", "\n出题官暂时歇笔，稍后再唤一声便是。"));
-                sink.next(new IdeaChatService.StreamEvent("done", null));
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, "\n出题官暂时歇笔，稍后再唤一声便是。"));
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
                 sink.complete();
                 return;
             }
             messageRepository.save(new IdeaMessageEntity(session.getId(), "question",
                     lawQuestionGen.envelopeJson(new LawQuestionGenService.QuizEnvelope(topic, questions))));
             log.info("出题流程收口（sessionId={}，{} 题）", session.getId(), questions.size());
-            sink.next(new IdeaChatService.StreamEvent("done", null));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
             sink.complete();
         } catch (Exception e) {
             log.warn("出题流程异常：{}", e.getMessage());
-            sink.next(new IdeaChatService.StreamEvent("error", "出题官暂时开小差了，稍后再试试～"));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.ERROR, "出题官暂时开小差了，稍后再试试～"));
             sink.complete();
         }
     }
@@ -274,7 +277,7 @@ public class LawQuizFlowService {
     private void newSubjectiveQuiz(FluxSink<IdeaChatService.StreamEvent> sink, IdeaSessionEntity session,
             List<IdeaChatService.InMessage> history, String triggerText, PendingQuiz pending) {
         log.info("主观题出题流程开讲（sessionId={}，trigger={}）", session.getId(), triggerText);
-        sink.next(new IdeaChatService.StreamEvent("thinking", "出题官正在拟一道案例分析题，好题约需半盏茶功夫…"));
+        sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.THINKING, "出题官正在拟一道案例分析题，好题约需半盏茶功夫…"));
         try {
             String topic = triggerText;
             for (String t : SUBJECTIVE_TRIGGERS) {
@@ -297,23 +300,23 @@ public class LawQuizFlowService {
             LawQuestionGenService.QuizQuestion q = lawQuestionGen.generateSubjective(
                     topic, refs, examRefs, 1, usedPoints, briefing);
             if (q == null) {
-                sink.next(new IdeaChatService.StreamEvent("chunk", "\n出题官暂时歇笔，稍后再唤一声便是。"));
-                sink.next(new IdeaChatService.StreamEvent("done", null));
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, "\n出题官暂时歇笔，稍后再唤一声便是。"));
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
                 sink.complete();
                 return;
             }
             String intro = "好，这就出一道案例分析——写完你的答案按「交卷」，老朽请判卷官当场拆解。";
             saveQuizRound(session.getId(), history, intro);
-            sink.next(new IdeaChatService.StreamEvent("chunk", intro));
-            sink.next(new IdeaChatService.StreamEvent("question", toJsonValue(q)));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, intro));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.QUESTION, toJsonValue(q)));
             messageRepository.save(new IdeaMessageEntity(session.getId(), "question",
                     lawQuestionGen.envelopeJson(new LawQuestionGenService.QuizEnvelope(topic, List.of(q)))));
             log.info("主观题出题流程收口（sessionId={}，questionId={}）", session.getId(), q.id());
-            sink.next(new IdeaChatService.StreamEvent("done", null));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
             sink.complete();
         } catch (Exception e) {
             log.warn("主观题出题流程异常：{}", e.getMessage());
-            sink.next(new IdeaChatService.StreamEvent("error", "出题官暂时开小差了，稍后再试试～"));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.ERROR, "出题官暂时开小差了，稍后再试试～"));
             sink.complete();
         }
     }
@@ -325,16 +328,16 @@ public class LawQuizFlowService {
                 + " 题未答，先答完这些——各题点选后交卷便是。";
         try {
             saveQuizRound(session.getId(), history, intro);
-            sink.next(new IdeaChatService.StreamEvent("chunk", intro));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, intro));
             for (LawQuestionGenService.QuizQuestion q : pending.unanswered()) {
-                sink.next(new IdeaChatService.StreamEvent("question", toJsonValue(q)));
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.QUESTION, toJsonValue(q)));
             }
             log.info("重发未答题（sessionId={}，剩 {} 题）", session.getId(), pending.unanswered().size());
-            sink.next(new IdeaChatService.StreamEvent("done", null));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
             sink.complete();
         } catch (Exception e) {
             log.warn("重发题目异常：{}", e.getMessage());
-            sink.next(new IdeaChatService.StreamEvent("error", "题目重发失败，稍后再试试～"));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.ERROR, "题目重发失败，稍后再试试～"));
             sink.complete();
         }
     }
@@ -352,8 +355,8 @@ public class LawQuizFlowService {
             if (answers.isEmpty()) {
                 String hint = "卷上还没见着答案——各题点选选项，选满后再交卷便是。";
                 saveQuizRound(session.getId(), history, hint);
-                sink.next(new IdeaChatService.StreamEvent("chunk", hint));
-                sink.next(new IdeaChatService.StreamEvent("done", null));
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, hint));
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
                 sink.complete();
                 return;
             }
@@ -396,13 +399,13 @@ public class LawQuizFlowService {
             }
             String feedback = fb.toString();
             saveQuizRound(session.getId(), history, feedback);
-            sink.next(new IdeaChatService.StreamEvent("chunk", feedback));
-            sink.next(new IdeaChatService.StreamEvent("done", null));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, feedback));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
             sink.complete();
             log.info("交卷判分（sessionId={}，交 {} 题，中 {} 题）", session.getId(), fresh, hit);
         } catch (Exception e) {
             log.warn("交卷判分异常：{}", e.getMessage());
-            sink.next(new IdeaChatService.StreamEvent("error", "讲评官暂时开小差了，稍后再试试～"));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.ERROR, "讲评官暂时开小差了，稍后再试试～"));
             sink.complete();
         }
     }
@@ -415,21 +418,21 @@ public class LawQuizFlowService {
             if (answer.isBlank()) {
                 String hint = "卷上还没见着字——写上你的答案再交卷便是。";
                 saveQuizRound(session.getId(), history, hint);
-                sink.next(new IdeaChatService.StreamEvent("chunk", hint));
-                sink.next(new IdeaChatService.StreamEvent("done", null));
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, hint));
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
                 sink.complete();
                 return;
             }
-            sink.next(new IdeaChatService.StreamEvent("thinking", "判卷官正在阅卷，约需半盏茶功夫…"));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.THINKING, "判卷官正在阅卷，约需半盏茶功夫…"));
             LawQuestionGenService.QuizQuestion q = pending.all().stream()
                     .filter(x -> "主观".equals(x.type())).findFirst().orElse(null);
             com.mengx.server.law.LawSubjectiveJudgeService.GradeOutcome o = q == null ? null
                     : lawSubjectiveJudge.grade(session.getUserId(), session.getId(), q.id(), answer);
             if (o == null) {
                 saveQuizRound(session.getId(), history, submission);
-                sink.next(new IdeaChatService.StreamEvent("chunk",
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK,
                         "判卷官阅卷遇到波折，稍后再交一次便是。"));
-                sink.next(new IdeaChatService.StreamEvent("done", null));
+                sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
                 sink.complete();
                 return;
             }
@@ -459,15 +462,15 @@ public class LawQuizFlowService {
             fb.append("\n\n想再练一道，说「继续出」便是。");
             String feedback = fb.toString();
             saveQuizRound(session.getId(), history, feedback);
-            sink.next(new IdeaChatService.StreamEvent("chunk", feedback));
-            sink.next(new IdeaChatService.StreamEvent("done", null));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.CHUNK, feedback));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.DONE, null));
             sink.complete();
             log.info("主观题交卷批改（sessionId={}，questionId={}，{}）",
                     session.getId(), q == null ? null : q.id(),
                     o.alreadyAnswered() ? "重交" : o.score() + "/" + o.total());
         } catch (Exception e) {
             log.warn("主观题交卷批改异常：{}", e.getMessage());
-            sink.next(new IdeaChatService.StreamEvent("error", "判卷官暂时开小差了，稍后再试试～"));
+            sink.next(new IdeaChatService.StreamEvent(IdeaChatService.StreamEvent.ERROR, "判卷官暂时开小差了，稍后再试试～"));
             sink.complete();
         }
     }
@@ -483,7 +486,8 @@ public class LawQuizFlowService {
 
     // ---------- 本地小工具（与 IdeaChatService 各自持有，避免跨服务耦合） ----------
 
-    /** 刷题轮次落库：user + assistant（与 IdeaChatService.saveRound 的 quiz 子集，无 card 分支） */
+    /** 刷题轮次落库：user + assistant（与 IdeaChatService.saveRound 的 quiz 子集，无 card 分支）。
+     *  主对话代理托管窗口直读 idea_messages，刷题对话天然进窗口，无需额外镜像 */
     private void saveQuizRound(Long sessionId, List<IdeaChatService.InMessage> history, String assistantReply) {
         IdeaChatService.InMessage lastUser = null;
         for (int i = history.size() - 1; i >= 0; i--) {

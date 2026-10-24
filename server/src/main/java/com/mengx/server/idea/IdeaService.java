@@ -91,10 +91,11 @@ public class IdeaService {
     /** 消息项：role=user/assistant 时为文本，role=card 时 cardId 指向最新卡片状态 */
     public record MessageDto(String role, String content, Long cardId) {}
 
-    /** 我的场次列表（新→旧） */
+    /** 我的场次列表（新→旧；只列主会话，FORGE 会话是任务面板不是聊天历史） */
     public List<SessionDto> listSessions(Long userId) {
         List<SessionDto> result = new ArrayList<>();
-        for (IdeaSessionEntity s : sessionRepository.findByUserIdOrderByCreatedAtDesc(userId)) {
+        for (IdeaSessionEntity s : sessionRepository.findByUserIdAndKindOrderByCreatedAtDesc(
+                userId, IdeaSessionEntity.KIND_MAIN)) {
             String preview = messageRepository
                     .findFirstBySessionIdAndRoleOrderByIdAsc(s.getId(), "user")
                     .map(m -> abbreviate(m.getContent(), 40))
@@ -112,15 +113,15 @@ public class IdeaService {
     public Optional<List<MessageDto>> listMessages(Long userId, Long sessionId) {
         return findSession(userId, sessionId).map(s ->
                 messageRepository.findBySessionIdOrderByIdAsc(sessionId).stream()
-                        .filter(m -> !"counsel".equals(m.getRole())) // 仙班锦囊是仙官内部参考，不下发
+                        .filter(m -> !"counsel".equals(m.getRole())) // 设计简报是主对话代理的内部参考，不下发
                         .map(m -> "card".equals(m.getRole())
                                 ? new MessageDto("card", null, parseCardId(m.getContent()))
                                 : new MessageDto(m.getRole(), m.getContent(), null))
                         .toList());
     }
 
-    /** 营造图存档：最近一份锦囊原文（前端面板恢复用）；无存档返回 empty */
-    public Optional<String> latestCounsel(Long userId, Long sessionId) {
+    /** 营造图存档：最近一份需求澄清状态原文（前端面板恢复用）；无存档返回 empty */
+    public Optional<String> latestDiscoveryState(Long userId, Long sessionId) {
         return findSession(userId, sessionId).map(s -> {
             List<IdeaMessageEntity> list =
                     messageRepository.findBySessionIdAndRoleOrderByIdAsc(sessionId, "counsel");
@@ -128,11 +129,14 @@ public class IdeaService {
         });
     }
 
-    /** 删除一场（连同其消息与卡片） */
+    /** 删除一场（连同其消息与卡片）；造物线会话随工单归档，不手动删除（防孤儿工单） */
     @Transactional
     public boolean deleteSession(Long userId, Long sessionId) {
         Optional<IdeaSessionEntity> session = findSession(userId, sessionId);
         if (session.isEmpty()) {
+            return false;
+        }
+        if (IdeaSessionEntity.KIND_FORGE.equals(session.get().getKind())) {
             return false;
         }
         List<IdeaCardEntity> cards = cardRepository.findBySessionIdOrderByIdDesc(sessionId);
@@ -168,9 +172,10 @@ public class IdeaService {
         return enrich(userId, cards);
     }
 
-    /** 我的点子墙：本人历场炼出的全部功能卡（新→旧），附成长轨迹时间与点赞 */
+    /** 我的点子墙：本人历场定稿的全部功能卡（新→旧），附成长轨迹时间与点赞（只看主会话，FORGE 会话不走定稿） */
     public List<IdeaCardDto> listMyCards(Long userId) {
-        List<IdeaSessionEntity> sessions = sessionRepository.findByUserIdOrderByCreatedAtDesc(userId);
+        List<IdeaSessionEntity> sessions = sessionRepository.findByUserIdAndKindOrderByCreatedAtDesc(
+                userId, IdeaSessionEntity.KIND_MAIN);
         if (sessions.isEmpty()) {
             return List.of();
         }

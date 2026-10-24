@@ -10,9 +10,9 @@ import java.util.List;
 import org.springframework.stereotype.Service;
 
 /**
- * 法学助手 Agent（仙班成员，供仙官调用）：消息路由已移交 com.mengx.server.routing
+ * 法学助手 Agent（内部 agent，经主对话编排调用）：消息路由已移交 com.mengx.server.routing
  * （注册表驱动的分层路由：L1 信号短路 / L2 上下文细判 / L3 粘性兜底），
- * 本类只负责法学人设与作答消息集；回答经仙官流式通道直达用户。
+ * 本类只负责法学人设与作答消息集；回答经主对话流式通道直达用户。
  * 法条库 RAG 检索、引用溯源、出题、批改等能力长在本类上。
  */
 @Service

@@ -1,6 +1,7 @@
 package com.mengx.server.idea;
 
 import com.mengx.server.auth.AuthService;
+import com.mengx.server.forge.ForgeService;
 import com.mengx.server.user.UserEntity;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -26,14 +27,19 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
 
-/** 创意收集接口（全部 JWT 鉴权）：会话、主理人访谈、功能卡确认/看板/导出（设计方案 §6 P0） */
+/** 创意收集接口（全部 JWT 鉴权）：会话、主对话访谈、功能卡确认/看板/导出（设计方案 §6 P0） */
 @RestController
 @RequestMapping("/api/idea")
 public class IdeaController {
 
     public record SessionResponse(Long sessionId, String nickname) {}
 
-    public record ChatRequest(Long sessionId, List<IdeaChatService.InMessage> messages, String mode, Boolean greet) {}
+    /**
+     * 一轮聊天请求。
+     * clientRoundId：前端生成的一轮幂等键（建议 UUID），同键重发只落库一次；greet 出场可不传。
+     */
+    public record ChatRequest(Long sessionId, List<IdeaChatService.InMessage> messages,
+                              String mode, Boolean greet, String clientRoundId) {}
 
     public record UpdateStatusRequest(String status, String declineReason) {}
 
@@ -42,7 +48,9 @@ public class IdeaController {
     private final IdeaPrdService prdService;
     private final IdeaThanksService thanksService;
     private final IdeaWishService wishService;
+    private final IdeaProposalService proposalService;
     private final AuthService authService;
+    private final ForgeService forgeService;
 
     public IdeaController(
             IdeaService ideaService,
@@ -50,13 +58,17 @@ public class IdeaController {
             IdeaPrdService prdService,
             IdeaThanksService thanksService,
             IdeaWishService wishService,
-            AuthService authService) {
+            IdeaProposalService proposalService,
+            AuthService authService,
+            ForgeService forgeService) {
         this.ideaService = ideaService;
         this.ideaChatService = ideaChatService;
         this.prdService = prdService;
         this.thanksService = thanksService;
         this.wishService = wishService;
+        this.proposalService = proposalService;
         this.authService = authService;
+        this.forgeService = forgeService;
     }
 
     private static Long userId(Authentication auth) {
@@ -77,7 +89,7 @@ public class IdeaController {
     }
 
     /**
-     * 主理人流式访谈（SSE）。事件 type：chunk | card（content=卡片 DTO JSON）| done | error。
+     * 主对话流式访谈（SSE）。事件 type：chunk | card（content=卡片 DTO JSON）| done | error。
      * 会话必须属于当前用户。
      * Flux→SseEmitter 手动桥接：Spring MVC 内置桥（ReactiveTypeHandler）的订阅器是
      * 「单槽+每元素一圈线程调度」接力，配合阻塞式 sink.next 连发会大量积压（token 攒到收口才涌出，
@@ -92,14 +104,16 @@ public class IdeaController {
         Flux<IdeaChatService.StreamEvent> flux;
         if (req == null || req.sessionId() == null || req.messages() == null
                 || (req.messages().isEmpty() && !greet)) {
-            flux = Flux.just(new IdeaChatService.StreamEvent("error", "sessionId 和 messages 不能为空"));
+            flux = Flux.just(new IdeaChatService.StreamEvent(
+                    IdeaChatService.StreamEvent.ERROR, "sessionId 和 messages 不能为空"));
         } else {
             flux = ideaService
                     .findSession(userId(auth), req.sessionId())
                     .map(session -> ideaChatService.stream(
-                            session, req.messages(), req.mode(), greet))
+                            session, req.messages(), req.mode(), greet, req.clientRoundId()))
                     .orElseGet(() -> Flux.just(
-                            new IdeaChatService.StreamEvent("error", "会话不存在，请新开一场")));
+                            new IdeaChatService.StreamEvent(
+                                    IdeaChatService.StreamEvent.ERROR, "会话不存在，请新开一场")));
         }
         SseEmitter emitter = new SseEmitter(-1L);
         flux.subscribe(
@@ -139,13 +153,51 @@ public class IdeaController {
                 .orElseGet(() -> ResponseEntity.status(404).body(Map.of("message", "会话不存在")));
     }
 
-    /** 营造图：最近一份锦囊存档原文（前端面板恢复用；无存档返回空对象） */
+    /** 营造图：最近一份设计简报存档原文（前端面板恢复用；无存档返回空对象） */
     @GetMapping("/sessions/{id}/design")
     public Map<String, String> latestDesign(Authentication auth, @PathVariable Long id) {
         return ideaService
-                .latestCounsel(userId(auth), id)
+                .latestDiscoveryState(userId(auth), id)
                 .map(c -> Map.of("design", c))
-                .orElseGet(Map::of);
+                .orElseGet(() -> Map.of());
+    }
+
+    /**
+     * 轮询通知：待裁决的应用提案（至多一条）+ 时间窗内晚到的功能卡。
+     * 前端在对话间隙轮询（8s 间隔、30s 超时、收到提案即停），按卡片 id 去重后补气泡。
+     */
+    @GetMapping("/sessions/{id}/notices")
+    public ResponseEntity<?> notices(Authentication auth, @PathVariable Long id) {
+        return ideaService
+                .findSession(userId(auth), id)
+                .<ResponseEntity<?>>map(s -> ResponseEntity.ok(proposalService.notices(id)))
+                .orElseGet(() -> ResponseEntity.status(404).body(Map.of("message", "会话不存在")));
+    }
+
+    /**
+     * 许可应用提案开班（用户点「聊聊看」）：CAS PENDING→ACCEPTED + 会话进入发现模式 +
+     * 固定开场白落库 + 异步触发首轮双官推演。返回开场白文本由前端直接展示为气泡。
+     */
+    @PostMapping("/proposals/{id}/accept")
+    public ResponseEntity<?> acceptProposal(Authentication auth, @PathVariable Long id) {
+        IdeaProposalService.ProposalResult result = proposalService.accept(userId(auth), id);
+        return switch (result.outcome()) {
+            case IdeaProposalService.OK -> ResponseEntity.ok(Map.of("opening", result.opening()));
+            case IdeaProposalService.NOT_FOUND ->
+                    ResponseEntity.status(404).body(Map.of("message", "提案不存在"));
+            default -> ResponseEntity.status(409).body(Map.of("message", "提案已被处理过"));
+        };
+    }
+
+    /** 拒绝应用提案（用户点「暂不」）：CAS PENDING→DISMISSED */
+    @PostMapping("/proposals/{id}/dismiss")
+    public ResponseEntity<?> dismissProposal(Authentication auth, @PathVariable Long id) {
+        return switch (proposalService.dismiss(userId(auth), id)) {
+            case IdeaProposalService.OK -> ResponseEntity.ok().body(Map.of());
+            case IdeaProposalService.NOT_FOUND ->
+                    ResponseEntity.status(404).body(Map.of("message", "提案不存在"));
+            default -> ResponseEntity.status(409).body(Map.of("message", "提案已被处理过"));
+        };
     }
 
     /** 删除一场（连同其消息与卡片） */
@@ -237,6 +289,40 @@ public class IdeaController {
                     headers.setContentType(new MediaType("text", "markdown", StandardCharsets.UTF_8));
                     headers.setContentDisposition(
                             ContentDisposition.attachment().filename("prd-card-" + id + ".md").build());
+                    return ResponseEntity.ok().headers(headers).body(md.getBytes(StandardCharsets.UTF_8));
+                })
+                .orElseGet(() -> ResponseEntity.status(404).body(null));
+    }
+
+    /**
+     * 应用卡开工造物线（回路 B §9）：校验体量=应用且已采纳，建工单与造物线会话，
+     * 事务提交后异步启动首岗（需求分析师）。重复开工返回 409，卡不合规返回 404。
+     */
+    @PostMapping("/cards/{id}/build")
+    public ResponseEntity<?> startBuild(Authentication auth, @PathVariable Long id) {
+        Long uid = userId(auth);
+        Optional<UserEntity> user = authService.findById(uid);
+        if (user.isEmpty()) {
+            return ResponseEntity.status(401).body(Map.of("message", "账号不存在"));
+        }
+        ForgeService.StartResult result =
+                forgeService.startBuild(uid, user.get().getNickname(), id);
+        if (result.ok()) {
+            return ResponseEntity.ok(result);
+        }
+        return ResponseEntity.status(result.conflict() ? 409 : 404)
+                .body(Map.of("message", result.message()));
+    }
+
+    /** 下载施工包 Markdown（造物线 DONE 后，可直接投喂 AI 编程工具施工） */
+    @GetMapping("/cards/{id}/build")
+    public ResponseEntity<byte[]> downloadBuild(@PathVariable Long id) {
+        return forgeService.getBuildMarkdown(id)
+                .<ResponseEntity<byte[]>>map(md -> {
+                    HttpHeaders headers = new HttpHeaders();
+                    headers.setContentType(new MediaType("text", "markdown", StandardCharsets.UTF_8));
+                    headers.setContentDisposition(
+                            ContentDisposition.attachment().filename("build-card-" + id + ".md").build());
                     return ResponseEntity.ok().headers(headers).body(md.getBytes(StandardCharsets.UTF_8));
                 })
                 .orElseGet(() -> ResponseEntity.status(404).body(null));

@@ -11,7 +11,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 /**
- * 分层路由官：每条用户消息经三层裁决进入通道——
+ * 分层路由器：每条用户消息经三层裁决进入通道——
  * L1 确定性信号层（注册表信号词，零成本零误差，消化大多数消息）；
  * L2 上下文细判（消息 + 最近几轮对话背景 + 注册表名册 → glm-4-flash，仅灰区消息走到这）；
  * L3 兜底（解析失败/输出未知通道 → 粘住当前通道，宁可不切，不可切错）。
@@ -66,7 +66,7 @@ public class RoutingService {
         boolean inDefault = ChannelRegistry.DEFAULT_CHANNEL.equals(last);
         // 默认通道 + 无任何专项信号 → 直接留在默认通道（泛话永远不可能突然切专项）
         if (inDefault && hits.isEmpty()) {
-            log.info("路由 L1 短路（默认通道且无专项信号 → 仙官）：{}", compact(text));
+            log.info("路由 L1 短路（默认通道且无专项信号 → host 主对话代理）：{}", compact(text));
             return ChannelRegistry.DEFAULT_CHANNEL;
         }
         // 专项通道 + 命中本通道信号 → 续通道（法学问答中的"那诈骗罪呢"无需再分类）
@@ -80,7 +80,7 @@ public class RoutingService {
             return last;
         }
         String prompt = """
-                你是消息路由官。判断本轮用户消息该交给哪个通道作答。
+                你是消息路由器。判断本轮用户消息该交给哪个通道作答。
 
                 【通道名册】
                 %s
@@ -89,9 +89,9 @@ public class RoutingService {
                 %s
 
                 【判断规则】
-                1. 若当前在专项通道，只有本轮消息是该专项话题的延续才留在原通道；客人开启新话题（点子、闲聊）就归仙官
+                1. 若当前在专项通道，只有本轮消息是该专项话题的延续才留在原通道；客人开启新话题（点子、闲聊）就归默认通道（host）
                 2. 分析、总结、继续、案例这类泛用词本身不代表专项问题，必须消息整体在问该领域才切专项通道
-                3. 拿不准时归仙官
+                3. 拿不准时选默认通道（host）
 
                 只输出 JSON，不要任何其他内容：{"channel": "通道id"}
 

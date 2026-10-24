@@ -1,6 +1,8 @@
 package com.mengx.server.idea;
 
-import com.mengx.server.agent.AgentRunner;
+import com.mengx.server.idea.agent.IdeaAgentFactory;
+import jakarta.annotation.PostConstruct;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -9,9 +11,9 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * PRD 格式化官（车间瘦身后只剩一道工序）：评审与设计已前置到仙官与仙班的共创对话里，
+ * PRD 格式化服务（瘦身后只剩一道工序）：评审与设计已前置到主对话代理与需求澄清 agent 的共创对话里，
  * 这里只把功能卡与方案卷轴格式化成施工文档——单次调用，不新增设计、不遗漏验收标准。
- * 按卡片体量分流：功能卡出施工 PRD，应用卡出「应用蓝图文档」（模块/数据/集成/分期）。
+ * 按卡片体量分流：功能级卡出施工 PRD，应用级卡出「应用蓝图文档」（模块/数据/集成/分期）。
  * 产出为 Markdown 文本直接存 prdJson，可直接投喂 AI 编程工具。
  */
 @Service
@@ -19,71 +21,66 @@ public class IdeaPrdService {
 
     private static final Logger log = LoggerFactory.getLogger(IdeaPrdService.class);
 
-    /** 现有技术栈（格式化出的 PRD 必须贴合，不得另起炉灶） */
-    private static final String STACK = """
-            现有技术栈（PRD 必须贴合，不得另起炉灶）：
-            - 前端：React 18 + Vite 6 单页应用，无路由库，手机端微信打开为主场景（视口自适应）
-            - 后端：Java 17 + Spring Boot 3.4，Spring Data JPA（ddl-auto=update），REST 接口 JWT 鉴权
-            - 数据库：PostgreSQL
-            - 已有体系：手机号登录即注册、聊天流式输出（SSE）、功能卡（四要素）、看板、每日一签、修为墙""";
+    /** 技术栈段真源在 classpath:forge-handbook.md 的 STACK 标记段；此常量仅为手册缺失/读取失败时的保底文本 */
+    private static final String FALLBACK_STACK = """
+            现有技术栈（施工必须贴合，不得另起炉灶）：
+            - 前端：React 18 + Vite 6 单页应用，无路由库，手机端为主场景（视口自适应），PC 端窄栏居中
+            - 后端：Java 17 + Spring Boot 3.4，Spring Data JPA（ddl-auto=update），REST 接口 JWT 鉴权，SSE 流式输出
+            - 数据库：PostgreSQL + pgvector（向量检索）
+            - LLM：智谱 GLM（langchain4j 官方集成，AiServices 多 agent 编排 + ChatMemory 托管上下文）
+            - 已有能力体系（涉及以下能力时必须复用现有实现，不得另建）：
+              手机号登录即注册、会话与消息持久化（换设备不丢）、主对话代理多 agent 访谈（意图分层路由 / 需求澄清共创 / 规格定稿）、
+              功能卡看板流转与文档产出、法学助手（法条 / 真题 RAG 三路检索、法考刷题与学情画像、主观题批改）、
+              每日一签、修为墙、LLM 用量埋点与 Prometheus 指标""";
 
-    private static final String FORMAT_PROMPT = """
-            你是 PRD 车间的格式化官。这张功能卡是一个单一功能的小点子（体量=功能），它的评审与设计已经在仙官和客人的对话中完成，
-            你只负责格式化成稿：把功能卡四要素与方案卷轴整理成一份完整 PRD（Markdown 格式），
-            结构必须包含以下章节：
-            # 标题（功能名）
-            ## 一句话说明
-            ## 背景与目标
-            ## 用户场景
-            ## 功能需求
-            ## 页面与交互
-            ## 数据与接口
-            ## 边界与异常
-            ## 验收标准（可逐条核对的清单）
+    private static final String HANDBOOK_PATH = "/forge-handbook.md";
+    private static final String STACK_BEGIN = "<!-- STACK:BEGIN -->";
+    private static final String STACK_END = "<!-- STACK:END -->";
 
-            铁律：
-            - 不新增设计：功能细节以功能卡四要素与方案卷轴为准，卷轴写到的必须收录
-            - 不遗漏：方案卷轴的验收标准必须完整进入「验收标准」章节，逐条可核对
-            - 卷轴某处为"待聊"或缺失时，按四要素补一段最小可行方案，不擅自扩大范围
-            - 这份 PRD 将直接投喂给 AI 编程工具在现有技术栈上实现，必须自包含、无歧义、无占位符
-            只输出 PRD 正文本身，不要任何前言或解释。""";
-
-    /** 应用卡的格式化模板：出「应用蓝图文档」（模块/数据/集成/分期） */
-    private static final String BLUEPRINT_PROMPT = """
-            你是 PRD 车间的格式化官。这张应用卡是一个复合大点子（体量=应用，要拆多个模块），
-            它的评审与设计已经在仙官和客人的对话中完成，你只负责格式化成稿：
-            把应用卡四要素与方案卷轴（含应用蓝图）整理成一份「应用蓝图文档」（Markdown 格式），
-            结构必须包含以下章节：
-            # 标题（应用名）
-            ## 一句话说明
-            ## 背景与目标
-            ## 应用架构（模块划分：每个模块干什么、模块之间怎么配合）
-            ## 数据与信息来源
-            ## 与现有应用的集成方案（客人从哪里进入、复用现有应用的什么）
-            ## 分期实现路径（第一期做什么、之后做什么）
-            ## 第一期验收标准（可逐条核对的清单）
-
-            铁律：
-            - 不新增设计：以应用卡四要素与方案卷轴（含蓝图）为准，蓝图写到的必须收录
-            - 不遗漏：卷轴的验收标准与蓝图分期必须完整进入对应章节，逐条可核对
-            - 这份蓝图文档将直接投喂给 AI 编程工具在现有技术栈上搭建骨架，必须自包含、无歧义、无占位符
-            只输出正文本身，不要任何前言或解释。""";
-
-    private final AgentRunner agentRunner;
+    private final IdeaAgentFactory ideaAgents;
     private final IdeaCardRepository cardRepository;
 
-    public IdeaPrdService(AgentRunner agentRunner, IdeaCardRepository cardRepository) {
-        this.agentRunner = agentRunner;
+    /** 注入 PRD 的技术栈段：启动时从架构手册 STACK 标记段提取，提取失败保底 FALLBACK_STACK */
+    private volatile String stack = FALLBACK_STACK;
+
+    public IdeaPrdService(IdeaAgentFactory ideaAgents, IdeaCardRepository cardRepository) {
+        this.ideaAgents = ideaAgents;
         this.cardRepository = cardRepository;
     }
 
-    /** 异步开进车间（看板手动触发），不阻塞调用方 */
+    /** 单一真源防腐烂：技术栈以 forge-handbook.md 的 STACK 标记段为准，改手册即生效，无需改代码 */
+    @PostConstruct
+    void loadStackFromHandbook() {
+        try (var in = getClass().getResourceAsStream(HANDBOOK_PATH)) {
+            if (in == null) {
+                log.warn("架构手册缺失（{}），PRD 格式化使用内置技术栈文本", HANDBOOK_PATH);
+                return;
+            }
+            String text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            int begin = text.indexOf(STACK_BEGIN);
+            int end = text.indexOf(STACK_END);
+            if (begin < 0 || end < 0 || end <= begin) {
+                log.warn("架构手册未找到 STACK 标记段，PRD 格式化使用内置技术栈文本");
+                return;
+            }
+            String extracted = text.substring(begin + STACK_BEGIN.length(), end).trim();
+            if (extracted.isBlank()) {
+                log.warn("架构手册 STACK 标记段为空，PRD 格式化使用内置技术栈文本");
+                return;
+            }
+            this.stack = extracted;
+        } catch (Exception e) {
+            log.warn("读取架构手册失败（PRD 格式化使用内置技术栈文本）：{}", e.getMessage());
+        }
+    }
+
+    /** 异步格式化（看板手动触发），不阻塞调用方 */
     public void generateAsync(Long cardId) {
         CompletableFuture.runAsync(() -> {
             try {
                 generateNow(cardId);
             } catch (Exception e) {
-                log.warn("PRD 车间异步执行异常 cardId={}: {}", cardId, e.getMessage());
+                log.warn("PRD 格式化异步执行异常 cardId={}: {}", cardId, e.getMessage());
             }
         });
     }
@@ -100,8 +97,10 @@ public class IdeaPrdService {
         String prdJson = null;
         try {
             // 体量分流：功能卡出施工 PRD，应用卡出应用蓝图文档
-            String prompt = IdeaCardEntity.SCALE_APP.equals(card.getScale()) ? BLUEPRINT_PROMPT : FORMAT_PROMPT;
-            String markdown = agentRunner.run(prompt, buildContext(card) + "\n\n" + STACK);
+            String input = buildContext(card) + "\n\n" + stack;
+            String markdown = IdeaCardEntity.SCALE_APP.equals(card.getScale())
+                    ? ideaAgents.prdFormatter().formatBlueprint(input)
+                    : ideaAgents.prdFormatter().formatFunctionPrd(input);
             prdJson = truncate(markdown, 12000);
             prdStatus = IdeaCardEntity.PRD_DONE;
         } catch (Exception e) {
@@ -141,7 +140,7 @@ public class IdeaPrdService {
                 优先级：%s
                 提出人：%s
 
-                【方案卷轴】（仙官与客人共创的设计沉淀，格式化以此为准）
+                【方案卷轴】（主对话代理与客人共创的设计沉淀，格式化以此为准）
                 %s
                 """.formatted(
                 card.getTitle(),

@@ -1,23 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { api, streamIdeaChat } from '../api';
 import FeatureCard from '../components/FeatureCard';
+import ForgeBell from '../components/ForgeBell';
 import Fortune from '../components/Fortune';
 
 const SESSION_KEY = 'mengx_chat_session';
 
-/** 仙官回复按约定不带 markdown，模型违规时渲染前剥掉符号兜底（加粗/斜体/标题/列表/行内代码） */
-function stripMarkdown(text) {
-  if (!text) return text;
-  return text
-    .replace(/```[a-zA-Z]*\n?/g, '')
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*\n]+)\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/^\s*#{1,6}\s+/gm, '')
-    .replace(/^\s*[-*]\s+/gm, '')
-    .replace(/^\s*\d+\.\s+/gm, '')
-    .replace(/`([^`]+)`/g, '$1');
-}
+/** 助手消息按 Markdown 渲染（分析档支持标题/加粗/列表/表格）；memo 隔离流式增量重渲染到当前条 */
+const AssistantText = memo(function AssistantText({ text }) {
+  return (
+    <div className="md-body">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text || ''}</ReactMarkdown>
+    </div>
+  );
+});
 
 /** 应用级点子的九格设计稿（营造图）：key 与后端 AgentSpec 字段对齐 */
 const APP_GRIDS = [
@@ -40,7 +38,7 @@ const FEATURE_GRIDS = [
   ['acceptance', '验收标准'],
 ];
 
-/** 锦囊存档 JSON → 营造图面板模型；旧版纯文本存档解析失败返回 null（不展示面板） */
+/** 推演存档 JSON → 营造图面板模型；旧版纯文本存档解析失败返回 null（不展示面板） */
 function toDesignModel(raw, prevTexts) {
   let data;
   try {
@@ -60,6 +58,23 @@ function toDesignModel(raw, prevTexts) {
     const fresh = !pending && prevTexts && prevTexts[key] !== undefined && prevTexts[key] !== text;
     return { key, label, text: pending ? '待聊' : text, pending, fresh };
   });
+  // 自定义维度：九维之外客人临时新增的格子（同步推演当轮即下发，与九格同排展示）
+  if (isApp && Array.isArray(source.extraDimensions)) {
+    source.extraDimensions.forEach((d, i) => {
+      const key = `extra_${i}`;
+      const text = d?.content || '';
+      texts[key] = text;
+      const pending = text === '' || text === '待聊' || text === '（待聊）';
+      const fresh = !pending && prevTexts && prevTexts[key] !== undefined && prevTexts[key] !== text;
+      cells.push({
+        key,
+        label: d?.name || `维度${i + 1}`,
+        text: pending ? '待聊' : text,
+        pending,
+        fresh,
+      });
+    });
+  }
   return { scale: isApp ? '应用' : '功能', agenda: data?.product?.agenda, cells, texts };
 }
 
@@ -97,12 +112,12 @@ function ThinkingPanel({ steps, active }) {
  * 消息持久化在后端（换设备不丢），localStorage 只存当前场指针；
  * 顶栏「历史」可查看/切换/删除自己的场次。
  */
-export default function Chat({ user, onOpenBoard, onLogout }) {
+export default function Chat({ user, onOpenBoard, onOpenForge, onLogout }) {
   const [session, setSession] = useState(null);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
-  const [thinking, setThinking] = useState(false); // 设计模式下仙班推演锦囊中（掐指一算）
+  const [thinking, setThinking] = useState(false); // 推演阶段进行中（共创推演/路由/检索各节点）
   const [history, setHistory] = useState(null); // null=面板关闭，'loading'=加载中，数组=场次列表
   const [showFortune, setShowFortune] = useState(false);
   const [showAlms, setShowAlms] = useState(false); // 添香火：确认卡片后的赞赏码弹层
@@ -112,6 +127,8 @@ export default function Chat({ user, onOpenBoard, onLogout }) {
   const [designOpen, setDesignOpen] = useState(true);
   const [menuOpen, setMenuOpen] = useState(false); // 顶栏品牌菜单（看板/每日一签折叠在百晓通下）
   const brandRef = useRef(null);
+  const [proposal, setProposal] = useState(null); // 待裁决的应用提案邀请卡（旁路观察器异步产出，轮询补收）
+  const pollRef = useRef(null); // notices 轮询定时器（收迟到提案/功能卡）
   const [quizAnswered, setQuizAnswered] = useState({}); // 法学题目卡已选选项（questionId → 字母），交卷前可改选
   // 当前待交卷题组（试卷模式）：从消息尾部回溯最后一组连续题卡；其后已有「交卷」消息则视为已交卷
   const quizGroup = useMemo(() => {
@@ -154,6 +171,8 @@ export default function Chat({ user, onOpenBoard, onLogout }) {
 
   /** 开一场新访谈（进入页面 / 会话失效自愈 / 用户点"新开一场"） */
   async function startSession() {
+    stopNoticesPolling();
+    setProposal(null);
     const s = await api('/api/idea/sessions', { method: 'POST' });
     setSession(s);
     setMessages([]);
@@ -186,15 +205,20 @@ export default function Chat({ user, onOpenBoard, onLogout }) {
     });
   }
 
-  /** 切到某一场（含进页恢复）：拉取成功才切换，失败由调用方处理 */
+  /** 切到某一场（含进页恢复）：拉取成功才切换，失败由调用方处理；
+   *  notices 一并拉取——上次刷新前留下的待裁决提案，恢复后直接展示 */
   async function openSession(sessionId) {
-    const [list, designRes] = await Promise.all([
+    stopNoticesPolling();
+    setProposal(null);
+    const [list, designRes, noticesRes] = await Promise.all([
       fetchConversation(sessionId),
-      api(`/api/idea/sessions/${sessionId}/design`).catch(() => null), // 无锦囊/旧版存档均静默
+      api(`/api/idea/sessions/${sessionId}/design`).catch(() => null), // 无存档/旧版格式均静默
+      api(`/api/idea/sessions/${sessionId}/notices`).catch(() => null),
     ]);
     const model = designRes?.design ? toDesignModel(designRes.design, {}) : null;
     prevDesignTexts.current = model ? model.texts : {};
     setDesign(model);
+    setProposal(noticesRes?.proposals?.[0] || null);
     const s = { sessionId, nickname: user.nickname };
     setSession(s);
     setMessages(list);
@@ -226,7 +250,7 @@ export default function Chat({ user, onOpenBoard, onLogout }) {
       return next;
     });
 
-  /** design 事件/历史恢复共用：锦囊存档 → 营造图面板模型（解析失败自动跳过）；
+  /** design 事件/历史恢复共用：推演存档 → 营造图面板模型（解析失败自动跳过）；
    *  只更新内容不强制展开——首次进场由 designOpen 初始值展开，之后尊重用户手动收起状态 */
   function applyDesign(raw) {
     const model = toDesignModel(raw, prevDesignTexts.current);
@@ -263,7 +287,7 @@ export default function Chat({ user, onOpenBoard, onLogout }) {
         return next;
       });
     } else if (ev.type === 'design') {
-      // 营造图：仙班锦囊存档直发，面板实时展示共创进展
+      // 营造图：推演官当轮同步产出快照直发，面板当轮点亮共创进展
       applyDesign(ev.content);
     } else if (ev.type === 'question') {
       // 法学出题：题目卡气泡（后端逐题一条事件）
@@ -273,6 +297,73 @@ export default function Chat({ user, onOpenBoard, onLogout }) {
     } else if (ev.type === 'error') {
       appendLast(`\n⚠️ ${ev.content || '出错了'}`);
     }
+  }
+
+  /** 停止通知轮询（提案已收到 / 切场 / 新开一场 / 卸载） */
+  function stopNoticesPolling() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }
+
+  /**
+   * 通知轮询：机会观察器在旁路线程异步判定，SSE 关流后前端拿不到结果，
+   * 轮询 notices 补收两类迟到产物——提案邀请卡（收到即停）与宣布定稿后晚到的功能卡（按 id 去重追加）。
+   * 8 秒一次、30 秒超时自动停；切场/新开一场由调用方清理。
+   */
+  function startNoticesPolling(sessionId) {
+    stopNoticesPolling();
+    const startedAt = Date.now();
+    pollRef.current = setInterval(async () => {
+      if (Date.now() - startedAt > 30000) {
+        stopNoticesPolling();
+        return;
+      }
+      try {
+        const data = await api(`/api/idea/sessions/${sessionId}/notices`);
+        if (data.proposals?.length > 0) {
+          setProposal(data.proposals[0]);
+          stopNoticesPolling();
+          return;
+        }
+        if (data.cards?.length > 0) {
+          setMessages((prev) => {
+            const known = new Set(prev.filter((m) => m.role === 'card').map((m) => m.card.id));
+            const fresh = data.cards.filter((c) => !known.has(c.id));
+            return fresh.length ? [...prev, ...fresh.map((card) => ({ role: 'card', card }))] : prev;
+          });
+        }
+      } catch {
+        // 网络抖动静默，等下一轮
+      }
+    }, 8000);
+  }
+
+  /** 接下提案：许可后端进入发现模式，开场白气泡即时展示（零模型调用秒回）；
+   *  营造图待用户首轮发言、推演官同步产出第一版快照时当轮点亮（accept 时无新信息不推演） */
+  async function acceptProposal() {
+    if (!proposal || !session) return;
+    const { id } = proposal;
+    try {
+      const data = await api(`/api/idea/proposals/${id}/accept`, { method: 'POST' });
+      setProposal(null);
+      setMessages((prev) => [
+        ...prev,
+        { role: 'assistant', content: data?.opening || '好，那这个点子咱们摊开来聊——先说说你想拿它做什么？' },
+      ]);
+    } catch (err) {
+      setProposal(null);
+      alert(err.message);
+    }
+  }
+
+  /** 婉拒提案：归档后继续正常陪聊（失败静默，提案下次进场不再出现由后端静默归档兜底） */
+  function dismissProposal() {
+    if (!proposal) return;
+    const { id } = proposal;
+    setProposal(null);
+    api(`/api/idea/proposals/${id}/dismiss`, { method: 'POST' }).catch(() => {});
   }
 
   async function sendVia(targetMode, text) {
@@ -288,14 +379,20 @@ export default function Chat({ user, onOpenBoard, onLogout }) {
     setSending(true);
     setMode(targetMode); // 本条消息的通道：law=请法学助手答，答完回落仙官
     setMessages((prev) => [...prev, { role: 'user', content: text }, { role: 'assistant', content: '' }]);
+    // 一轮一个幂等键：网络重发/双击重试用同一键，后端只落库一次（secure context 用 UUID，旧环境降级随机串）
+    const clientRoundId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID()
+      : `r-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try {
-      await streamIdeaChat(session.sessionId, history, targetMode, handleEvent);
+      await streamIdeaChat(session.sessionId, history, targetMode, handleEvent, false, clientRoundId);
     } catch (err) {
       appendLast(`\n⚠️ ${err.message}`);
     } finally {
       setSending(false);
       setThinking(false);
       setMode(null);
+      // 收口后启动通知轮询：补收旁路观察器的迟到提案/晚到的功能卡
+      startNoticesPolling(session.sessionId);
     }
   }
 
@@ -407,6 +504,9 @@ export default function Chat({ user, onOpenBoard, onLogout }) {
     document.addEventListener('mousedown', onDoc);
     return () => document.removeEventListener('mousedown', onDoc);
   }, [menuOpen]);
+
+  // 卸载时停止通知轮询
+  useEffect(() => () => stopNoticesPolling(), []);
 
   /** 从历史切回某一场 */
   async function switchSession(item) {
@@ -566,6 +666,7 @@ export default function Chat({ user, onOpenBoard, onLogout }) {
           )}
         </div>
         <div className="header-actions">
+          <ForgeBell onOpenJob={onOpenForge} />
           <button type="button" className="icon-btn" title="聊天记录" aria-label="聊天记录" onClick={openHistory}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
               strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -615,7 +716,7 @@ export default function Chat({ user, onOpenBoard, onLogout }) {
                   ))}
                 </div>
               )}
-              {m.role === 'assistant' ? stripMarkdown(m.content) : m.content}
+              {m.role === 'assistant' ? <AssistantText text={m.content} /> : m.content}
               {m.role === 'assistant' && sending && i === messages.length - 1 && m.content && (
                 <span className="type-cursor" aria-hidden="true" />
               )}
@@ -634,6 +735,24 @@ export default function Chat({ user, onOpenBoard, onLogout }) {
               )}
             </div>
           ),
+        )}
+        {/* 提案邀请卡：旁路观察器判定「值得一起造个应用」后送达，用户裁决是否开聊 */}
+        {proposal && !sending && (
+          <div className="proposal-card">
+            <p className="proposal-tag">百晓通瞧出了一点机缘</p>
+            <p className="proposal-title">「{proposal.suggestTitle}」</p>
+            <p className="proposal-story">{proposal.userStory}</p>
+            <p className="proposal-gap">眼下这铺子还办不到：{proposal.gap}</p>
+            {proposal.signalQuote && (
+              <p className="proposal-quote">你说过：「{proposal.signalQuote}」</p>
+            )}
+            <div className="fc-actions">
+              <button className="fc-btn-confirm" onClick={acceptProposal}>
+                聊聊看
+              </button>
+              <button onClick={dismissProposal}>暂不</button>
+            </div>
+          </div>
         )}
         {showTyping && (
           <div className="bubble assistant typing">

@@ -10,7 +10,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * 用量监听者：注册进 ZhipuApi 静态枢纽，把每次模型调用双写两处——
+ * 用量监听者：注册进 LlmUsage 静态枢纽，把每次模型调用双写两处——
  * llm_usage_log 落库（SQL 查账口径）+ Micrometer 指标（/actuator/prometheus 实时口径）：
  * llm.calls{scene,model,status} 调用量、llm.latency{scene,model} 延迟、llm.tokens{scene,model,direction} 消耗。
  * 双写各自 try/catch：观测失败静默，永不影响主流程。

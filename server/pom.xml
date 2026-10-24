@@ -81,11 +81,11 @@
       <artifactId>langchain4j</artifactId>
       <version>${langchain4j.version}</version>
     </dependency>
-    <!-- OpenAI 兼容客户端：对接智谱 GLM (https://open.bigmodel.cn/api/paas/v4) -->
+    <!-- 智谱 GLM 官方社区集成：ChatModel/StreamingChatModel + tools/function calling + thinking 参数原生支持 -->
     <dependency>
       <groupId>dev.langchain4j</groupId>
-      <artifactId>langchain4j-open-ai</artifactId>
-      <version>${langchain4j.version}</version>
+      <artifactId>langchain4j-community-zhipu-ai</artifactId>
+      <version>1.18.0-beta28</version>
     </dependency>
     <!-- WebFlux：为 MVC 控制器提供 Flux/Reactor 支持（SSE 流式输出） -->
     <dependency>

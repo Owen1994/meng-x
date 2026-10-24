@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api, getToken } from '../api';
 import FeatureCard, { STATUS_LABELS, STATUS_CLASSES } from '../components/FeatureCard';
+import ForgeBell from '../components/ForgeBell';
 import PrdModal from '../components/PrdModal';
 
 /** 优先级徽标配色（高/中/低） */
@@ -42,7 +43,7 @@ function Masonry({ items, empty, renderItem, className = '' }) {
  * 功能卡看板（设计方案 §3-⑥⑦ §6 P0-5/6）：
  * 全部卡片瀑布流（创意值优先）+ 状态流转 + 导出。
  */
-export default function Board({ user, onBack, onLogout }) {
+export default function Board({ user, onBack, onOpenForge, onLogout }) {
   const [cards, setCards] = useState([]);
   const [status, setStatus] = useState('');
   const [error, setError] = useState('');
@@ -163,6 +164,33 @@ export default function Board({ user, onBack, onLogout }) {
     } catch (err) {
       alert(err.message);
     }
+  }
+
+  /** 开工造物线（已采纳的应用卡）：建工单后直跳造物线会话；重复开工（409）引导从顶栏铃铛进入 */
+  async function startForge(c) {
+    try {
+      const r = await api(`/api/idea/cards/${c.id}/build`, { method: 'POST' });
+      onOpenForge(r.jobId);
+    } catch (err) {
+      alert(err.message?.includes('已有工单') ? `${err.message}，可从顶栏铃铛进入。` : err.message);
+    }
+  }
+
+  /** 下载施工包（造物线 DONE 后的 Markdown，可直接投喂 AI 编程工具） */
+  async function downloadBuild(c) {
+    const resp = await fetch(`/api/idea/cards/${c.id}/build`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    if (!resp.ok) {
+      alert('施工包还没出稿或已失效，请稍后再试');
+      return;
+    }
+    const blob = await resp.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `施工包-${c.title}.md`;
+    a.click();
+    URL.revokeObjectURL(a.href);
   }
 
   async function download(params, filename) {
@@ -288,6 +316,23 @@ export default function Board({ user, onBack, onLogout }) {
                     {c.status === 'ACCEPTED' && (
                       <>
                         <button onClick={() => changeStatus(c, 'IMPLEMENTED')}>标为已实现</button>
+                        {c.scale === '应用' && (!c.buildStatus || c.buildStatus === 'NONE') && (
+                          <button className="fc-forge-btn" onClick={() => startForge(c)}>
+                            开工造物线
+                          </button>
+                        )}
+                        {c.scale === '应用' && c.buildStatus === 'DONE' && (
+                          <button className="rv-open-btn" onClick={() => downloadBuild(c)}>
+                            下载施工包
+                          </button>
+                        )}
+                        {c.scale === '应用' && c.buildStatus && c.buildStatus !== 'NONE'
+                          && c.buildStatus !== 'DONE' && c.buildStatus !== 'CANCELLED' && (
+                          <button disabled title="从顶栏铃铛进入造物线">营造中…</button>
+                        )}
+                        {c.scale === '应用' && c.buildStatus === 'CANCELLED' && (
+                          <button disabled title="工单已搁置谢绝">已搁置</button>
+                        )}
                         {c.prdStatus === 'DONE' && (
                           <button className="rv-open-btn" onClick={() => setPrdCard(c)}>
                             查看 PRD
